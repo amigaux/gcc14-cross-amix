@@ -71,7 +71,7 @@ answer, flushed, in an order where a crash names the step it died in. Every
 fact in `docs/TOOLCHAIN.md` was established this way. Add a probe rather than
 reasoning about what the machine probably does.
 
-Two lessons from the probes that already exist:
+Three lessons from the probes that already exist:
 
 - **Run the same battery on the host where the code is portable**
   (`tools/test-compat-host.sh`). The formatter's tests passed natively and died
@@ -81,6 +81,12 @@ Two lessons from the probes that already exist:
   libgcc's divide routine without ever calling it, and sent the hunt the wrong
   way for an hour. If a probe is meant to exercise a library routine, make the
   operands `volatile`.
+- **A C probe has to ask for the compat layer by name: `-lamixc99`.**
+  `amix-cc.sh` adds it for C++, but the C path links only `-lgcc -lc`, and the
+  functions SVR4.0 predates live in the compat library — `usleep` among them.
+  The symptom is `undefined reference to 'usleep'` from a file that compiles
+  without a warning and whose call links cleanly from C++, which reads as a
+  problem in the source rather than in the link line.
 
 ## Running things on a real machine
 
@@ -88,7 +94,8 @@ Optional, and only needed to verify against hardware. `tools/hw.py` runs
 commands over telnet and `tools/push-run.sh` moves a binary across by TFTP and
 runs it. Both read the address and login from `local/secrets.env`.
 
-Two traps worth knowing before blaming the machine:
+Four traps worth knowing before blaming the machine. Each of them answers
+without an error, which is what makes them expensive:
 
 - **A command longer than 256 characters is silently dropped**, not run — that
   is the terminal's canonical-mode line limit. It produces no error and the
@@ -99,3 +106,15 @@ Two traps worth knowing before blaming the machine:
 - **Wait for a process to exit, not for text in its log.** A wait loop grepping
   for a marker matches the marker inside the *echoed* command, long before that
   command has produced anything.
+- **This `grep` has no `-E` and no `\|`.** Alternation is a GNU extension, so
+  `grep "amiwm\|twm"` matches nothing at all and exits quietly. The output is
+  an empty list that looks like an answer: it was read here as "no window
+  manager is running" while one was. Use one `grep` per pattern.
+- **`awk "{print \$2}"` never reaches awk.** In double quotes the *remote*
+  shell expands `$2` — an unset positional parameter — to nothing, leaving the
+  program `{print }`, which prints the whole line. So
+  ``kill `ps -ef | grep X | awk "{print \$2}"` `` hands `kill` an entire `ps`
+  line. Here it answered `invalid id`; the dangerous case is the one where it
+  fails silently and the process is assumed killed. Quote the awk program with
+  single quotes, or skip awk: `... | while read user pid rest; do kill $pid;
+  done`.
