@@ -71,7 +71,7 @@ answer, flushed, in an order where a crash names the step it died in. Every
 fact in `docs/TOOLCHAIN.md` was established this way. Add a probe rather than
 reasoning about what the machine probably does.
 
-Three lessons from the probes that already exist:
+Four lessons from the probes that already exist:
 
 - **Run the same battery on the host where the code is portable**
   (`tools/test-compat-host.sh`). The formatter's tests passed natively and died
@@ -87,6 +87,15 @@ Three lessons from the probes that already exist:
   The symptom is `undefined reference to 'usleep'` from a file that compiles
   without a warning and whose call links cleanly from C++, which reads as a
   problem in the source rather than in the link line.
+- **`amix-cc.sh` passes no `-O`, so a probe is built at `-O0` unless it asks.**
+  A probe built that way measures its own loop, not the machine, and it does so
+  plausibly enough to be believed. A memory-bandwidth probe here reported
+  8.5 MB/s at `-O0` and 13.7 MB/s at `-O2` for the same loop on the same
+  hardware; worse, a proposed optimisation looked worthless at `-O0` and 12%
+  faster at `-O2`, so the two builds gave opposite answers to the question the
+  probe existed to settle. The tell is a probe whose numbers do not line up
+  with the optimised program it is supposed to explain: if the probe is slower
+  than the real thing, suspect the probe's flags before the machine.
 
 ## Running things on a real machine
 
