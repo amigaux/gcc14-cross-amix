@@ -90,7 +90,7 @@ if [ ! -x "$TC_PREFIX/bin/$TARGET-g++" ]; then
 		./contrib/download_prerequisites --no-graphite
 	fi
 	python3 "$REPO/toolchain/patch-libstdcxx-configure.py" \
-		"$WORK/gcc-$GCC_VER/libstdc++-v3/configure"
+		"$WORK/gcc-$GCC_VER/libstdc++-v3/configure" "$AMIX_SYSROOT"
 
 	rm -rf "$WORK/build-gcc"; mkdir -p "$WORK/build-gcc"
 	cd "$WORK/build-gcc"
@@ -115,10 +115,9 @@ if [ ! -x "$TC_PREFIX/bin/$TARGET-g++" ]; then
 	#   68020/030/040 because it only ever avoids instructions, never adds any.
 	#   This has to be the compiler DEFAULT: passing CFLAGS_FOR_TARGET does not
 	#   reach libgcc's own compile (measured -- the instructions survived).
-	# --disable-hosted-libstdcxx builds libsupc++ only: operator new/delete,
-	# RTTI and the exception machinery, without the parts of libstdc++ that
-	# assume a modern POSIX libc.  OpenTTD 1.0.5 avoids the STL by policy, so
-	# this is expected to be enough; if it is not, the gap is named at link time.
+	# libstdc++ is built HOSTED -- containers, strings, the lot -- which is why
+	#   patch-libstdcxx-configure.py above has to tell its configure what the
+	#   AMIX C library declares.  See docs/TOOLCHAIN.md section 13.
 	"$WORK/gcc-$GCC_VER/configure" \
 		--target="$TARGET" --prefix="$TC_PREFIX" \
 		--with-sysroot="$AMIX_SYSROOT" \
