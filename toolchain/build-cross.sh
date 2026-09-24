@@ -140,6 +140,14 @@ if [ ! -x "$TC_PREFIX/bin/$TARGET-g++" ]; then
 	"$REPO/toolchain/install-specs.sh" >/dev/null
 	GCCVER=$("$TC_PREFIX/bin/$TARGET-gcc" -dumpversion)
 	cp "$TC_PREFIX/lib/gcc/$TARGET/$GCCVER/specs" "$WORK/build-gcc/gcc/specs"
+	# gcc/Makefile lists specs in GCC_PASSES, which fixincludes depends on, so
+	# the copy above makes fixincludes out of date -- and it starts with
+	# `rm -rf include-fixed`.  Let it run again NOW, before the repaired headers
+	# are copied in.  Otherwise it runs inside all-target-libgcc (configuring
+	# libgcc depends on all-gcc), silently wipes the copy below, and libstdc++
+	# dies much later on the raw K&R <sys/stat.h> -- measured on a build from
+	# zero; a build tree that already had them installed hides it.
+	make -j"$JOBS" MAKEINFO=true all-gcc
 
 	# Repaired system headers, for the same two drivers and the same reason:
 	# libstdc++'s own sources need the C99 macros AMIX's <math.h> lacks.
