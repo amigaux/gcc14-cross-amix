@@ -80,7 +80,11 @@ if [ ! -x "$TC_PREFIX/bin/$TARGET-ld" ]; then
 fi
 
 # --------------------------------------------------------------------- gcc ---
-if [ ! -x "$TC_PREFIX/bin/$TARGET-g++" ]; then
+# Done means libstdc++ is installed, not that g++ is: install-gcc puts g++ in
+# place long before libstdc++ is built, so a run that failed there left a g++
+# behind, and testing for it made the next run skip everything and report
+# success with no C++ library.
+if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ]; then
 	fetch "https://ftp.gnu.org/gnu/gcc/gcc-$GCC_VER/gcc-$GCC_VER.tar.xz" "gcc-$GCC_VER.tar.xz"
 	if [ ! -d "$WORK/gcc-$GCC_VER" ]; then
 		tar -C "$WORK" -xf "$WORK/src/gcc-$GCC_VER.tar.xz"

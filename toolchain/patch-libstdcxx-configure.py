@@ -8,7 +8,7 @@ not on its list, so the build stops before it starts.
 An EMPTY case gets past that but is not enough for a hosted build. libstdc++
 then believes the target has no float math functions and compiles its own
 fallbacks in src/c++98/math_stubs_float.cc, each guarded by _GLIBCXX_HAVE_<F>.
-AMIX declares eighteen of those functions in <math.h>, so the fallbacks collide
+AMIX declares twenty of those functions in <math.h>, so the fallbacks collide
 with the real ones:
 
     math_stubs_float.cc:35:3: error: conflicting declaration of
