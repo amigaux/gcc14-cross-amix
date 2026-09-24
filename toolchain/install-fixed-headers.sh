@@ -36,6 +36,14 @@ done < <(cd compat/include/fixed && find . -name '*.h' -printf '%P\n' | sort)
 
 python3 toolchain/make-kandr-fixes.py "$AMIX_SYSROOT" "$FIXED"
 
+# Linkage guards after the repairs above, so it skips the headers they wrote
+# (each carries its own guard) -- but BEFORE the additions below.  An addition
+# that brings its own extern "C" block, as stdio.h's does, makes the header
+# look already guarded, and the rest of it is then left with C++ linkage.
+# Measured on a build from zero: libstdc++ stopped on 'int system(const
+# char*)' declared with C++ linkage in stdio.h and C linkage in stdlib.h.
+toolchain/make-cxx-wrappers.sh "$AMIX_SYSROOT" "$FIXED"
+
 # Additions to headers that fixincludes has already copied: those copies shadow
 # the sysroot, so a #include_next wrapper would never reach them and replacing
 # them would discard whatever fixincludes repaired.  Appending is the one option
@@ -51,6 +59,4 @@ if [ -d compat/include/fixed-additions ]; then
 		fi
 	done < <(cd compat/include/fixed-additions && find . -name '*.h' -printf '%P\n' | sort)
 fi
-# Last, so it skips everything repaired above.
-toolchain/make-cxx-wrappers.sh "$AMIX_SYSROOT" "$FIXED"
 echo "install-fixed-headers.sh: -> $FIXED"
