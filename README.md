@@ -132,7 +132,10 @@ problem, whatever their compiler.
   Mount or copy an AMIX filesystem and take those three trees across. X11 is
   not needed for C or C++ on its own; `tools/sync-sysroot.sh` adds it when you
   come to link X clients. Other AMIX cross-toolchain projects use this same
-  layout, so a sysroot assembled for one of those works here unchanged.
+  layout, so a sysroot assembled for one of those works here with one
+  addition: AMIX has no `stdint.h`, and GCC's own one includes the C
+  library's, so copy `compat/include/stdint.h` to `usr/include/stdint.h`
+  (`tools/sync-sysroot.sh` does this too).
 
 ```sh
 cp config.sh.example config.sh        # paths, CPU, this host's address
@@ -140,10 +143,10 @@ $EDITOR config.sh
 toolchain/build-cross.sh              # once, about 25 minutes
 ```
 
-`build-cross.sh` refuses to start if `$AMIX_SYSROOT/usr/include` is not there,
-so the sysroot has to exist first. It builds binutils and GCC, installs the
-specs and the repaired headers, builds the compat layer, and then libgcc and
-libstdc++.
+`build-cross.sh` refuses to start if `$AMIX_SYSROOT/usr/include` or its
+`stdint.h` is not there, so the sysroot has to exist first. It builds binutils
+and GCC, installs the specs and the repaired headers, builds the compat layer,
+and then libgcc and libstdc++.
 
 Two more steps, only if you are going to link X clients:
 

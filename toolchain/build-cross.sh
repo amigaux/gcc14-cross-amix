@@ -36,6 +36,13 @@ REPO="$(pwd)"
 . ./config.sh
 : "${AMIX_SYSROOT:?set AMIX_SYSROOT in config.sh}"
 [ -d "$AMIX_SYSROOT/usr/include" ] || { echo "build-cross.sh: no headers in $AMIX_SYSROOT/usr/include" >&2; exit 1; }
+# SVR4.0 has no <stdint.h>, and GCC's own one for this target #include_next's
+# the C library's, so without ours in the sysroot even <cstdint> fails and
+# libstdc++ stops late in the build.  Checked here, before the long part.
+[ -f "$AMIX_SYSROOT/usr/include/stdint.h" ] || {
+	echo "build-cross.sh: no $AMIX_SYSROOT/usr/include/stdint.h -- copy compat/include/stdint.h there (tools/sync-sysroot.sh does this too)" >&2
+	exit 1
+}
 
 TARGET=m68k-elf
 TC_PREFIX="${TC_PREFIX:-$HOME/opt/m68k-amix}"
