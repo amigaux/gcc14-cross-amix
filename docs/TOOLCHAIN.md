@@ -109,7 +109,21 @@ checksum in `$TC_PREFIX/.amix-abi.sha256` and rebuilds GCC when it differs.
 `probe/retabi.c` checks both faults in both directions, with its other half
 built by gcc 2.7.2.3. Without the fix, the disassembly already shows the first
 one: the old compiler's caller does `jsr g14_ptr` and then `cmpl %a0,%d2`,
-while `g14_ptr` ends `addl %d1,%d0; rts`.
+while `g14_ptr` ends `addl %d1,%d0; rts`. Run on `solon` (kernel
+68060-261003-08) on 2026-10-27, the same probe built both ways:
+
+```
+                                   without the fix   with it
+pointer, gcc 2.7.2.3 -> GCC 14:    ok                ok
+pointer, GCC 14 -> gcc 2.7.2.3:    WRONG             ok
+struct, gcc 2.7.2.3 -> GCC 14:     WRONG             ok
+struct, GCC 14 -> gcc 2.7.2.3:     WRONG             ok
+div_t, libc div() -> GCC 14:       WRONG             ok
+ldiv_t, libc ldiv() -> GCC 14:     WRONG             ok
+```
+
+The one line that passes without the fix is the direction that already
+worked, because AMIX puts a returned pointer in both registers.
 
 **Why this table once said "match".** Its first version said pointer return
 matched, said the struct-return address was in `%a1`, and warned that
