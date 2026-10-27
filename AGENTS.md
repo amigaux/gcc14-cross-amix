@@ -34,6 +34,10 @@ produces a **working binary that behaves wrongly** rather than a build error:
   looks like a shortcut: its `libgcc_eh.a` asks a dynamic loader
   (`_dl_find_object`) for exception tables and locks with pthreads, and AMIX has
   neither. An `elf` target builds the registry unwinder instead.
+- **`-mno-strict-align` is a default, and it has a kernel condition.** It is
+  speed, not ABI (layout unchanged, measured): 1.6x Dhrystone on a 68060. On
+  a 68040, a misaligned access across a page boundary wedges a kernel older
+  than the 040/060 port's 68040-260728-26.
 - **`export MAKEINFO=true`**, or binutils dies in `doc/bfd.info` minutes in.
 - **The C++ linkage wrappers are generated, never committed.** AMIX's C headers
   predate C++ and declare no linkage, so a C++ file including `<stdio.h>` gets a

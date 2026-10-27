@@ -114,7 +114,18 @@ replace("cc1", "%(cc1_cpu) -Wno-error=implicit-int")
 # C++ and libgcc's own compiles all get it from one place.  Guarded on
 # -mno-align-int so the flag can still be turned off deliberately -- useful for
 # proving the fault again, useless by accident.
-replace("self_spec", "%{!mno-align-int:-malign-int}")
+#
+# -mno-strict-align is the opposite kind of flag: speed, not ABI.  m68k-elf
+# assumes a 68000, which faults on a misaligned word, so by default it reads
+# every int it cannot prove aligned as two 16-bit halves -- including every
+# int argument, because the stack is only known to be 2-aligned.  Every CPU
+# AMIX runs on, 68020 to 68060, does misaligned access in hardware.  Measured
+# by Jussi on a 68LC060 at 80 MHz: Dhrystone 1.60x over the strict build and
+# 1.43x over gcc 2.7.2.3.  Struct layout and the argument stack image are the
+# same either way (measured), so code built with and without it mixes freely.
+# It needs a port kernel from 68040-260728-26 on when run on a 68040: see
+# docs/TOOLCHAIN.md, "-mno-strict-align is the default".
+replace("self_spec", "%{!mno-align-int:-malign-int} %{!mstrict-align:-mno-strict-align}")
 
 # Read off the machine's own /usr/bin/ls: libc.so.1 IS the runtime linker, text
 # starts at 0x80000000, and the hash table is the classic SysV one.  Nothing

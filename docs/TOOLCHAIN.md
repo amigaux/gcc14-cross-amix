@@ -739,3 +739,47 @@ Worth recording because both produced confident nonsense:
   silently evaluated every address as 0, which turned "all offsets are below
   0x100" into a finding. The real range is 0x0a to 0x1f84, and the conclusion
   survived only because it was re-derived in Python.
+
+## -mno-strict-align is the default
+
+Unlike `-malign-int`, this flag changes speed, not the ABI. It is in the specs
+as `%{!mstrict-align:-mno-strict-align}`, so `-mstrict-align` turns it back off.
+
+**What it changes.** GCC's m68k back end assumes a 68000 unless told otherwise
+(`m68k.cc` sets `MASK_STRICT_ALIGNMENT` for every non-ColdFire CPU, and the
+`m68k-elf` target does not undo it the way `linux.h` does). A 68000 faults on a
+misaligned word access, so GCC reads every `int` it cannot prove 4-aligned as two
+16-bit halves joined with a shift and an `or`. That includes every `int`
+argument, because the stack is only known to be 2-aligned. A function that
+passes three small structs by value compiles to 42 instructions strict and 19
+without. Every CPU AMIX runs on, from the 68020 to the 68060, does misaligned
+access in hardware.
+
+**What it does not change.** Measured on 31 sizes, offsets and alignments
+(structs with chars, shorts, pointers, doubles, `long long`, bit-fields, unions,
+nesting, `packed` and `long double`): identical under both flags. A struct passed
+by value lands on the stack in the same image too; only the width of the moves
+that build it changes. So objects built with and without the flag mix freely,
+and libraries need no rebuild for it alone.
+
+**Measured** by Jussi in October 2026 on a 68LC060 at 80 MHz in an A4000
+(3 rounds of each build, spread under 1 %): Dhrystone 1.60x over the strict
+GCC 14 build and 1.43x over gcc 2.7.2.3, which the strict build was about 11 %
+*behind*. Memory, fork and context-switch figures stayed within 2 % across all
+three. An emulated 68030 gave 1.6–1.8x. Floating point, which goes through the
+060 kernel's FPU emulation, and `paranoia` passed in both GCC 14 builds.
+
+**What it needs from the kernel, on a 68040.** A misaligned access that crosses
+a page boundary is reported by the 68040 at the access's *start* address. A
+kernel that does not handle that faults on the wrong page forever: an endless
+`as_fault` loop that wedges the machine (040/060 port, ISSUE-37, found with
+wolf3d). Port kernels from **68040-260728-26** on have the fix, accepted on 68040
+metal. Strict-aligned code rarely crosses a page with one access, and code built
+with this default does it as a matter of course, so **run it on a 68040 only
+with a kernel at least that new.** Nobody has measured this flag on 68040 metal
+yet; the emulator is not evidence for the 68040's fault behaviour.
+
+**One edge on the 68060.** A misaligned `cas`/`cas2` traps there (SIGKILL on the
+default kernel; SIGSEGV with the opt-in isp060 pass, by design). That only
+affects atomics on misaligned addresses. The flag leaves data layout alone,
+so it does not create misaligned atomics that were not already there.
