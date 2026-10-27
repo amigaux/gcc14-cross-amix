@@ -18,6 +18,10 @@ system header and read as if the program were at fault:
     error: 'int stat' redeclared as different kind of entity
     error: 'path' was not declared in this scope
 
+Two of them, sys/mkdev.h and ftw.h, also declare the function extern before
+defining it static, which GCC 14 rejects in C as well; those declarations are
+made static here too (make_static below).
+
 Five headers in a stock AMIX installation do this: sys/stat.h, sys/utsname.h,
 sys/mkdev.h, ftw.h and regexp.h. The first two are on the path of anything that
 touches files or asks the machine its name, so this is not avoidable by
@@ -46,9 +50,57 @@ sysroot, fixed_dir = sys.argv[1], sys.argv[2]
 incdir = os.path.join(sysroot, "usr/include")
 
 # A signature line: name(a, b, c) with bare identifiers and nothing after it.
-SIG = re.compile(r"^(\s*)([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*\)\s*$")
+# The storage class and return type are usually on the line above; ftw.h puts
+# them on the same line ("static int ftw(path, fn, depth)"), so allow that.
+SIG = re.compile(r"^(\s*(?:static\s+[A-Za-z_][\w\s]*?[\s*])?)([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*\)\s*$")
 # A parameter declaration line, possibly declaring several names.
 DECL = re.compile(r"^\s*((?:const\s+|volatile\s+|unsigned\s+|signed\s+|struct\s+|union\s+|enum\s+|register\s+)*[A-Za-z_]\w*)\s+([^;]+);\s*$")
+# A one-function declaration with a parameter list: [extern|static] type name(...);
+PROTO = re.compile(r"^(\s*)(extern\s+|static\s+)?([A-Za-z_][\w\s*]*?[\s*])([A-Za-z_]\w*)\s*\((.*)\)\s*;\s*$")
+
+
+def balanced(text):
+    """True if text never closes a parenthesis it did not open, and ends level."""
+    depth = 0
+    for c in text:
+        depth += (c == "(") - (c == ")")
+        if depth < 0:
+            return False
+    return depth == 0
+
+
+def split_args(text):
+    """Split a parameter list at its top-level commas."""
+    out, depth, cur = [], 0, ""
+    for c in text:
+        depth += (c == "(") - (c == ")")
+        if c == "," and depth == 0:
+            out.append(cur.strip()); cur = ""
+        else:
+            cur += c
+    return out + [cur.strip()]
+
+
+def prototypes(lines):
+    """name -> parameter types, from the ANSI prototypes in the header.
+
+    Used for a definition whose old-style parameters the declaration parser
+    cannot read -- ftw.h's `int (*fn) ();` -- and the prototype is the better
+    source anyway: in C++ an empty () means no arguments, so copying the K&R
+    type would declare a second ftw() that the program's calls never reach."""
+    out = {}
+    for line in lines:
+        m = PROTO.match(line)
+        if m and m.group(5).strip() and balanced(m.group(5)):
+            out.setdefault(m.group(4), split_args(m.group(5)))
+    return out
+
+
+def with_name(ptype, name):
+    """Put a parameter name into an abstract type: 'int (*)(int)' -> 'int (*fn)(int)'."""
+    if "(*)" in ptype:
+        return ptype.replace("(*)", "(*%s)" % name, 1)
+    return ptype + name if ptype.endswith("*") else "%s %s" % (ptype, name)
 
 
 def split_declarators(text):
@@ -66,7 +118,8 @@ def split_declarators(text):
 
 def convert(text):
     lines = text.split("\n")
-    out, i, converted = [], 0, []
+    protos = prototypes(lines)
+    out, i, converted, static = [], 0, [], []
     while i < len(lines):
         m = SIG.match(lines[i])
         if not m:
@@ -93,14 +146,46 @@ def convert(text):
                 types[ident] = "%s %s%s%s" % (base, stars, ident, array)
             j += 1
 
-        # Only rewrite when every parameter was accounted for.
         if types is None or j >= len(lines) or any(n not in types for n in names):
-            out.append(lines[i]); i += 1; continue
+            # Fall back on the header's own prototype, if the lines up to the
+            # brace are all declarations and it names as many parameters.
+            j = i + 1
+            while j < len(lines) and lines[j].strip().endswith(";"):
+                j += 1
+            ptypes = protos.get(name)
+            if (j < len(lines) and lines[j].strip().startswith("{")
+                    and ptypes and len(ptypes) == len(names)):
+                types = {n: with_name(t, n) for n, t in zip(names, ptypes)}
+            else:
+                # Only rewrite when every parameter was accounted for.
+                out.append(lines[i]); i += 1; continue
 
+        prev = next((l for l in reversed(out) if l.strip()), "")
+        if "static" in indent.split() or prev.split()[:1] == ["static"]:
+            static.append(name)
         out.append("%s%s(%s)" % (indent, name, ", ".join(types[n] for n in names)))
         converted.append(name)
         i = j
-    return "\n".join(out), converted
+    return "\n".join(out), converted, static
+
+
+def make_static(text, names):
+    """Give `static` to the declarations of functions the header defines static.
+
+    sys/mkdev.h and ftw.h declare makedev(), major(), minor() and ftw() with
+    external linkage, then define them static further down.  C has called that
+    undefined since C89; gcc 2.7.2.3 warned, GCC 14 stops with "static
+    declaration of 'makedev' follows non-static declaration", and g++ with
+    "was declared 'extern' and later 'static'".  Only a declaration of that one
+    function is changed, never a line that declares several."""
+    out = []
+    for line in text.split("\n"):
+        m = PROTO.match(line)
+        if (m and m.group(4) in names and (m.group(2) or "").strip() != "static"
+                and balanced(m.group(5)) and "," not in m.group(3)):
+            line = "%sstatic %s%s(%s);" % (m.group(1), m.group(3), m.group(4), m.group(5))
+        out.append(line)
+    return "\n".join(out)
 
 
 total = 0
@@ -109,9 +194,10 @@ for rel in ("sys/stat.h", "sys/utsname.h", "sys/mkdev.h", "ftw.h", "regexp.h"):
     if not os.path.exists(src):
         continue
     text = open(src, errors="replace").read()
-    new, names = convert(text)
+    new, names, static = convert(text)
     if not names:
         continue
+    new = make_static(new, static)
     dst = os.path.join(fixed_dir, rel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     # These sit in include-fixed beside the generated linkage wrappers and are

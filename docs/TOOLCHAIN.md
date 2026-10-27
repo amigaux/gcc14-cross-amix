@@ -445,6 +445,20 @@ system headers that are wrong or older than the language, and which is searched
 before the sysroot. The vendor tree is untouched, and the generated output
 contains AMIX's own code so it never leaves the machine.
 
+Two of those headers have a second fault, and that one breaks **C** too.
+`<sys/mkdev.h>` declares `makedev`, `major` and `minor`, and `<ftw.h>` declares
+`ftw`, with external linkage, and then defines them `static`. C has called that
+undefined since C89. gcc 2.7.2.3 warns (`static declaration for 'makedev'
+follows non-static`); GCC 14 stops. The fixer therefore also makes those
+prototypes `static` (`make_static`). `<ftw.h>` was missed until October 2026,
+because its definition has the return type on the signature line and a
+function-pointer parameter (`int (*fn) ();`), and the converter skipped
+anything it could not read. It now takes the parameter types from the header's
+own prototype. That is also the right source for C++, where an empty `()`
+means no arguments and would declare a second `ftw` that calls never reach.
+The calls end up in libc's `__makedev`, `__major`, `__minor` and `_xftw`. Jussi
+reported `mkdev.h`; `ftw.h` turned up while checking the fix.
+
 **Missing C99 pieces**, supplied by hand-written wrappers in
 `compat/include/fixed/` that reach the real header with `#include_next`:
 
