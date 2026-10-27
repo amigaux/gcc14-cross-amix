@@ -797,7 +797,9 @@ packed data. Code built with this default can make them, so **run it on a
 write, a read-modify-write and a compiled `memcpy`, each misaligned across a
 boundary into a page that is not resident yet, and checks what came back.
 Because it can wedge an older kernel, it refuses to run on a 68040 kernel
-older than the fix.
+older than the fix. On 2026-10-27 it passed all nine steps on `solon` (68060
+RC6 on a Z3660, kernel 68060-261003-08). That proves the probe itself, not
+the 68040.
 
 **One edge on the 68060.** `cas2` traps there at any alignment, because the 060
 does not implement it, and so does a misaligned `cas` (040/060 port, ISSUE-79).
