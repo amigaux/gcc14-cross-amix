@@ -109,8 +109,9 @@ checksum in `$TC_PREFIX/.amix-abi.sha256` and rebuilds GCC when it differs.
 `probe/retabi.c` checks both faults in both directions, with its other half
 built by gcc 2.7.2.3. Without the fix, the disassembly already shows the first
 one: the old compiler's caller does `jsr g14_ptr` and then `cmpl %a0,%d2`,
-while `g14_ptr` ends `addl %d1,%d0; rts`. Run on `solon` (kernel
-68060-261003-08) on 2026-10-27, the same probe built both ways:
+while `g14_ptr` ends `addl %d1,%d0; rts`. Run on metal on 2026-10-27 —
+`solon`, an Amiga 3000 with a Z3660 accelerator carrying a real 68060 (RC6),
+kernel 68060-261003-08 — the same probe built both ways:
 
 ```
                                    without the fix   with it
