@@ -41,8 +41,15 @@ produces a **working binary that behaves wrongly** rather than a build error:
 - **`-z norelro`, and `-U__linux__ -U__gnu_linux__ -Ulinux`.** The code
   generator is a Linux cross compiler; portable sources otherwise take Linux
   paths AMIX cannot satisfy.
-- **Do not add `-fpcc-struct-return`.** It moves the struct return value into
-  memory but still passes the address in `%a1`, where AMIX wants `%a0`.
+- **The return convention is patched into GCC: `toolchain/amix-abi.h`.**
+  m68k-elf returns a pointer in `%d0` only and small structs in `%d0`/`%d1`.
+  AMIX returns pointers in `%a0` (and `%d0`), and the caller reads `%a0`;
+  structs always go through a buffer at `%a0`. Code that crosses between
+  compilers reads the wrong register and runs on. Any GCC 14 library built
+  before the header has to be rebuilt. This bullet used to say "do not add
+  `-fpcc-struct-return`, the address goes in `%a1`". That was measured on
+  Debian's `m68k-linux-gnu` compiler and is wrong for `m68k-elf` — a
+  measurement belongs to the compiler it was taken with.
 - **The vendor's 1991 X archives need repairing before they can be linked.**
   Every object in `libX11.a` has `sh_link` on its `.rela` section pointing at
   itself; modern `ld` silently drops those relocations and the program jumps to

@@ -11,10 +11,11 @@
 # ----------------------------------------------------
 # GCC dropped every m68k SVR4 target years ago (GCC 14 has elf, netbsdelf,
 # uclinux, linux, rtems and nothing else), so an "m68k-amix" triple would need a
-# config.gcc patch we would then carry forever.  We do not need one: measured
-# against the machine's own binaries, the plain m68k ELF ABI *is* the AMIX ABI.
-# What AMIX-specific knowledge exists lives in tools/amix-cc.sh instead, where
-# it is one file to read rather than a patch to rebase.
+# config.gcc patch we would then carry forever.  m68k-elf is close enough that
+# one header covers the difference: it returns values the embedded way, and
+# toolchain/amix-abi.h gives it AMIX's SVR4 convention instead -- pointers in
+# %a0, structs in memory.  That header is appended to m68k-elf's tm_file below;
+# everything else AMIX-specific lives in the specs and tools/amix-cc.sh.
 #
 # WHY m68k-elf RATHER THAN THE PACKAGED m68k-linux-gnu COMPILER
 # -------------------------------------------------------------
@@ -84,7 +85,13 @@ fi
 # place long before libstdc++ is built, so a run that failed there left a g++
 # behind, and testing for it made the next run skip everything and report
 # success with no C++ library.
-if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ]; then
+#
+# Done also means built with the current toolchain/amix-abi.h.  A compiler from
+# before that header returns pointers in %d0 only, so it is rebuilt rather
+# than kept: its libraries are wrong for every caller the new one compiles.
+ABI_STAMP="$TC_PREFIX/.amix-abi.sha256"
+ABI_SUM=$(sha256sum "$REPO/toolchain/amix-abi.h" | cut -d' ' -f1)
+if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ] || [ "$(cat "$ABI_STAMP" 2>/dev/null)" != "$ABI_SUM" ]; then
 	fetch "https://ftp.gnu.org/gnu/gcc/gcc-$GCC_VER/gcc-$GCC_VER.tar.xz" "gcc-$GCC_VER.tar.xz"
 	if [ ! -d "$WORK/gcc-$GCC_VER" ]; then
 		tar -C "$WORK" -xf "$WORK/src/gcc-$GCC_VER.tar.xz"
@@ -93,6 +100,15 @@ if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ]; then
 		# which is only needed for loop optimisations we do not use.
 		./contrib/download_prerequisites --no-graphite
 	fi
+	# AMIX's return convention, which m68k-elf does not have: see the header.
+	# Appended to the m68k-*-elf* tm_file -- the one line in config.gcc that
+	# ends in m68020-elf.h and a quote -- so it is read after m68kemb.h, whose
+	# DEFAULT_PCC_STRUCT_RETURN it replaces.  Idempotent.
+	cp "$REPO/toolchain/amix-abi.h" "$WORK/gcc-$GCC_VER/gcc/config/m68k/amix-abi.h"
+	sed -i '/^\ttm_file=.*m68k\/m68kemb\.h m68k\/m68020-elf\.h"$/s|"$| m68k/amix-abi.h"|' \
+		"$WORK/gcc-$GCC_VER/gcc/config.gcc"
+	grep -q 'm68020-elf.h m68k/amix-abi.h"' "$WORK/gcc-$GCC_VER/gcc/config.gcc" || {
+		echo "build-cross.sh: could not add amix-abi.h to config.gcc" >&2; exit 1; }
 	python3 "$REPO/toolchain/patch-libstdcxx-configure.py" \
 		"$WORK/gcc-$GCC_VER/libstdc++-v3/configure" "$AMIX_SYSROOT"
 
@@ -175,6 +191,7 @@ if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ]; then
 		exit 1
 	}
 	make install-target-libstdc++-v3
+	echo "$ABI_SUM" > "$ABI_STAMP"
 	echo "== gcc installed"
 fi
 

@@ -76,10 +76,11 @@ Two things to do before starting:
 ## How it works, in one paragraph
 
 GCC dropped every m68k SVR4 target years ago, so this configures the generic
-`m68k-elf` one — which is fine, because measured against the machine's own
-binaries the plain m68k ELF ABI *is* the AMIX ABI. What AMIX-specific knowledge
-exists lives in a specs file and a small compat layer rather than in a patch to
-GCC. The packaged `m68k-linux-gnu` compiler cannot be used instead: its
+`m68k-elf` one and adjusts it to the AMIX ABI in two small places. One
+target header, `toolchain/amix-abi.h`, gives it AMIX's function-return
+convention: pointers in `%a0`, structs always in memory. A specs file adds
+`-malign-int`, AMIX's struct layout. Everything else AMIX-specific lives in
+the specs and a small compat layer. The packaged `m68k-linux-gnu` compiler cannot be used instead: its
 `libgcc_eh.a` finds exception tables by asking a dynamic loader
 (`_dl_find_object`) and locks with pthreads, and AMIX has neither. An `elf`
 target builds the registry unwinder, where `crtbegin` registers `.eh_frame`

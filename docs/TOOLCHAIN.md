@@ -66,32 +66,62 @@ The only differences were two extra program headers GNU tools add by habit:
 refuses to drop for this target — `-z nognustack` is ignored). **AMIX's loader
 ignores the unknown segment**, verified by running the binary; see §5.
 
-## 4. The m68k ABI matches, with one exception
+## 4. The m68k ABI: three differences, all fixed in the compiler
 
-Verified by disassembling AMIX libc and comparing against GCC 14's output for
-the same construct:
+Compared by disassembling AMIX libc and gcc 2.7.2.3 output against GCC 14's
+output for the same construct. "GCC 14" here is the `m68k-elf` compiler this
+repository builds, *before* the fixes in the last column:
 
-| Property | AMIX (AT&T cc, 1991) | GCC 14 m68k | Verdict |
+| Property | AMIX (AT&T cc, gcc 2.7.2.3) | GCC 14 `m68k-elf` | Fixed by |
 |---|---|---|---|
-| Pointer return | `%a0` and `%d0` (`strcpy` ends `movel %a0,%d0`) | same | match |
-| `char` | signed | signed | match |
-| Struct alignment | 2 bytes (`{char;int;short}` → size 8, `int` at offset 2) | same | match |
-| `long double` | 96-bit extended, 12 bytes | 12 bytes | match |
-| Struct return pointer | **`%a0`** (`div` stores through `%a0` with no load from the stack) | **`%a1`** | **differs** |
+| Pointer return | `%a0`, copied to `%d0`; **the caller reads `%a0`** | `%d0` only | `toolchain/amix-abi.h` |
+| Struct return | always in memory, buffer address in `%a0` | 4 and 8 bytes in `%d0`/`%d1`; larger in memory, address in `%a0` | `toolchain/amix-abi.h` |
+| Struct alignment | `int` and pointer members at 4 | at 2 | `-malign-int` in the specs (see *-malign-int is the ABI*) |
+| `char` | signed | signed | — |
+| `long double` | 96-bit extended, 12 bytes | 12 bytes | — |
+| `float`/`double` return | `%fp0` | `%fp0` | — |
+| `long long` return | `%d0`:`%d1` | `%d0`:`%d1` | — |
 
-The struct-return register is the one real mismatch, and it is narrow: it only
-matters when *calling a precompiled AMIX function that returns a struct by
-value*. In libc that is `div()` and `ldiv()`; Xlib returns no struct by value.
-Two ways out, in order of preference:
+**What the two return faults look like.** Neither one is a crash at the
+boundary; the caller reads a register that holds something else.
 
-1. Provide `div`/`ldiv` in the port's own compat layer, so the boundary is never
-   crossed. Cheap, local, no compiler change.
-2. Override `M68K_STRUCT_VALUE_REGNUM` (defined as `A1_REG` in
-   `gcc/config/m68k/m68k.h`) in a target header. Correct, but it means carrying
-   a GCC patch.
+- A gcc 2.7.2.3 program calling a GCC 14 library function that returns a
+  pointer gets whatever `%a0` last held. Seen by Jussi in October 2026:
+  `zlibVersion()` returned garbage, and a 68030 took a SIGSEGV. The reverse
+  direction happens to work, because AMIX puts the pointer in both registers.
+- GCC 14 code calling libc's `div()` or `ldiv()` reads `div_t` from `%d0`/`%d1`,
+  where libc never put it — and libc writes the real answer through whatever
+  `%a0` held, which can be anything.
 
-Note that `-fpcc-struct-return` does **not** fix this: it moves the return into
-memory, but still passes the address in `%a1`.
+**The fix** is a target header, `toolchain/amix-abi.h`, which `build-cross.sh`
+appends to the `m68k-*-elf*` `tm_file` in GCC's `config.gcc`. It does what the
+m68k Linux target does for pointers and the NetBSD target does for both:
+`FUNCTION_VALUE` becomes `m68k_function_value` (in `m68k.cc`, which returns a
+pointer in `%a0` and `%d0` and has the caller read `%a0`), `%a0` joins the
+value registers, and `DEFAULT_PCC_STRUCT_RETURN` is 1. It has to come after
+`m68kemb.h`, which sets the embedded convention.
+
+**Every GCC 14 library built before the fix has to be rebuilt** — libgcc and
+libstdc++ included — because a new caller reads a returned pointer from `%a0`,
+where an old callee never put it. `build-cross.sh` records the header's
+checksum in `$TC_PREFIX/.amix-abi.sha256` and rebuilds GCC when it differs.
+
+`probe/retabi.c` checks both faults in both directions, with its other half
+built by gcc 2.7.2.3. Without the fix, the disassembly already shows the first
+one: the old compiler's caller does `jsr g14_ptr` and then `cmpl %a0,%d2`,
+while `g14_ptr` ends `addl %d1,%d0; rts`.
+
+**Why this table once said "match".** Its first version said pointer return
+matched, said the struct-return address was in `%a1`, and warned that
+`-fpcc-struct-return` would not help. All three were true of the compiler it
+was measured with: Debian's `m68k-linux-gnu-gcc-14`, the fallback C compiler,
+before this repository moved to `m68k-elf`. The two targets differ exactly
+there. GCC's `linux.h` uses `m68k_function_value` and keeps `m68k.h`'s `%a1`
+struct-value register, while `m68kelf.h` moves that register to `%a0` and
+`m68kemb.h` returns everything in `%d0`. On `m68k-elf`, `-fpcc-struct-return`
+is in fact enough for structs, because the address is already in `%a0`. A
+measurement belongs to the compiler it was taken with. When the compiler
+changes, the table has to be measured again.
 
 ## 5. It runs on the real machine
 
@@ -506,7 +536,8 @@ exit=0
 
 The toolchain is not a research risk, it is a build task. The ELF format, the
 ABI, the startup path and the floating-point unit have all been checked against
-the real machine, and the only mismatch found has a one-line fix. What remains
+the real machine, and the only mismatch found has a one-line fix (written
+before the move to `m68k-elf`; section 4 now lists three). What remains
 unproven is C++ specifically: `new`/`delete`, virtual dispatch, templates and —
 the one genuine unknown — whether `try`/`catch` unwinds. That is what the next
 probe answers.
