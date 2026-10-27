@@ -793,6 +793,11 @@ metal. Strict code avoided misaligned word and long accesses, except through
 packed data. Code built with this default can make them, so **run it on a
 68040 only with a kernel at least that new.** Nobody has measured this flag on
 68040 metal yet; the emulator is not evidence for the 68040's fault behaviour.
+`probe/xpage.c` is the test for that day. It makes long and word reads, a
+write, a read-modify-write and a compiled `memcpy`, each misaligned across a
+boundary into a page that is not resident yet, and checks what came back.
+Because it can wedge an older kernel, it refuses to run on a 68040 kernel
+older than the fix.
 
 **One edge on the 68060.** `cas2` traps there at any alignment, because the 060
 does not implement it, and so does a misaligned `cas` (040/060 port, ISSUE-79).
