@@ -774,12 +774,14 @@ a page boundary is reported by the 68040 at the access's *start* address. A
 kernel that does not handle that faults on the wrong page forever: an endless
 `as_fault` loop that wedges the machine (040/060 port, ISSUE-37, found with
 wolf3d). Port kernels from **68040-260728-26** on have the fix, accepted on 68040
-metal. Strict-aligned code rarely crosses a page with one access, and code built
-with this default does it as a matter of course, so **run it on a 68040 only
-with a kernel at least that new.** Nobody has measured this flag on 68040 metal
-yet; the emulator is not evidence for the 68040's fault behaviour.
+metal. Strict code avoided misaligned word and long accesses, except through
+packed data. Code built with this default can make them, so **run it on a
+68040 only with a kernel at least that new.** Nobody has measured this flag on
+68040 metal yet; the emulator is not evidence for the 68040's fault behaviour.
 
-**One edge on the 68060.** A misaligned `cas`/`cas2` traps there (SIGKILL on the
-default kernel; SIGSEGV with the opt-in isp060 pass, by design). That only
-affects atomics on misaligned addresses. The flag leaves data layout alone,
-so it does not create misaligned atomics that were not already there.
+**One edge on the 68060.** `cas2` traps there at any alignment, because the 060
+does not implement it, and so does a misaligned `cas` (040/060 port, ISSUE-79).
+Either one ends the process: SIGKILL on the default kernel, and SIGSEGV with the
+opt-in isp060 pass, by design. The flag leaves data layout alone, and GCC's
+m68k back end never emits `cas2` (`sync.md` has only `cas`), so this default
+creates no new case.
