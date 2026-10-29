@@ -34,9 +34,13 @@ fi
 
 OUT=build/compat
 mkdir -p "$OUT"
+# No $AMIX_CPU here: that is the CPU the probes are built for, and this is
+# runtime, linked into every program whatever it was built for.  It follows
+# the compiler's default CPU, as libgcc does.  Built with -mcpu=68060, one
+# double in amix_vsnprintf became an fdmove, which a 68881/68882 does not have.
 # amix_init.c is a STARTFILE, not a library member: it is named in the specs
 # and linked into every program, because nothing would ever reference it.
-$CC $AMIX_CPU -O2 $INC -U__linux__ -U__gnu_linux__ -Ulinux -D__amix__ -D__svr4__ \
+$CC -O2 $INC -U__linux__ -U__gnu_linux__ -Ulinux -D__amix__ -D__svr4__ \
 	-c -o "$OUT/amix_init.o" compat/amix_init.c
 # mkdir rather than "install only if the directory happens to exist": skipping
 # the install in silence leaves a toolchain whose specs name a startfile that
@@ -49,7 +53,7 @@ echo "build-compat.sh: installed $TC_PREFIX/$TC_TARGET/lib/amix_init.o"
 for src in compat/*.c; do
 	[ "$src" = "compat/amix_init.c" ] && continue
 	obj="$OUT/$(basename "${src%.c}").o"
-	$CC $AMIX_CPU -O2 -fno-strict-aliasing $INC \
+	$CC -O2 -fno-strict-aliasing $INC \
 		-U__linux__ -U__gnu_linux__ -Ulinux -D__amix__ -D__svr4__ \
 		-c -o "$obj" "$src"
 done

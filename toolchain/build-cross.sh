@@ -122,17 +122,21 @@ if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ] || [ "$(cat "$ABI_STAMP" 2>/dev
 	#   own libstdc++; on a host with a few gigabytes free that fills the disk
 	#   before the build finishes.  One library serves the whole 68020..68060
 	#   range, which is every machine this port targets.
-	# --with-cpu=68060: NOT a performance choice, a correctness one.  libgcc's
-	#   __udivmoddi4 compiled for a 68020 uses divul / divull / mulul -- the
-	#   32x64 divide and 64-bit multiply forms the 68060 REMOVED.  On the target
-	#   machine, a 68060, they trap as unimplemented integer instructions, and
-	#   with no ISP handler in the kernel the process dies with SIGKILL.
-	#   Measured: any 64-bit divide by a NON-CONSTANT killed the process, while
-	#   dividing by a constant was fine because GCC folds that into a multiply
-	#   and never calls libgcc -- which is what made it look like a bug in the
-	#   caller.  Telling GCC the CPU is a 68060 makes it avoid those
-	#   instructions everywhere, libgcc included, and the result still runs on
-	#   68020/030/040 because it only ever avoids instructions, never adds any.
+	# --with-cpu=m68020-60: NOT a performance choice, a correctness one, in two
+	#   directions.  libgcc's __udivmoddi4 compiled for a plain 68020 uses
+	#   divul / divull / mulul -- the 32x64 divide and 64-bit multiply forms the
+	#   68060 REMOVED -- and with no ISP handler in the kernel the process dies
+	#   with SIGKILL.  Measured: any 64-bit divide by a NON-CONSTANT killed it,
+	#   while dividing by a constant was fine because GCC folds that into a
+	#   multiply and never calls libgcc.  Tuning for the 68060 avoids them.
+	#   But --with-cpu=68060 also makes the 68060 the ARCHITECTURE, and then
+	#   GCC uses the 68040/060-only FPU forms (fdmove, fsadd, fdmul...), which a
+	#   68881/68882 does not have: libgcc.a had 491 of them, libstdc++.a 123, and
+	#   on a 68030 + 68882 the first one kills the process with SIGSYS.  The
+	#   m68020-60 form is the 68020 instruction set and 68881 FPU tuned for the
+	#   whole range, so the runtime runs on every one of them.  (The "m" is
+	#   required: config.gcc only knows this name with it.)  -m68060 remains
+	#   available for code that will only ever run on a 68060.
 	#   This has to be the compiler DEFAULT: passing CFLAGS_FOR_TARGET does not
 	#   reach libgcc's own compile (measured -- the instructions survived).
 	# libstdc++ is built HOSTED -- containers, strings, the lot -- which is why
@@ -148,7 +152,7 @@ if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ] || [ "$(cat "$ABI_STAMP" 2>/dev
 		--disable-libstdcxx-filesystem-ts --disable-libstdcxx-pch \
 		--disable-libstdcxx-backtrace \
 		--disable-multilib --disable-gcov \
-		--with-cpu=68060
+		--with-cpu=m68020-60
 	make -j"$JOBS" MAKEINFO=true all-gcc
 	make install-gcc MAKEINFO=true
 
@@ -194,6 +198,21 @@ if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ] || [ "$(cat "$ABI_STAMP" 2>/dev
 	echo "$ABI_SUM" > "$ABI_STAMP"
 	echo "== gcc installed"
 fi
+
+# The runtime is linked into every program, so it has to run on every CPU in
+# the range: no 64-bit multiply/divide for the 68060, no 68040/060-only FPU
+# forms for the 68881/68882.  Checked on every run, not only after a build: a
+# prefix built by an earlier version of this script, --with-cpu=68060, passes
+# the test above (libstdc++.a present, amix-abi.h unchanged) and would
+# otherwise be kept.
+GCCLIB=$(dirname "$("$TC_PREFIX/bin/$TARGET-gcc" -print-libgcc-file-name)")
+RUNTIME=("$GCCLIB"/libgcc.a "$GCCLIB"/crt*.o "$TC_PREFIX/$TARGET/lib"/lib{stdc++,stdc++exp,supc++,amixc99}.a "$TC_PREFIX/$TARGET/lib/amix_init.o")
+python3 "$REPO/tools/check-68060-safe.py" --68881 "${RUNTIME[@]}" || {
+	echo "!! the runtime above is not safe on every 68020..68060 + 68881 machine." >&2
+	echo "!! If it was built by an older version of this script, rebuild it:" >&2
+	echo "!!   rm -rf $TC_PREFIX && toolchain/build-cross.sh" >&2
+	exit 1
+}
 
 echo
 echo "toolchain: $TC_PREFIX/bin/$TARGET-{gcc,g++}"

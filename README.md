@@ -37,7 +37,7 @@ possible:
 - **68060 code that does not trap.** That CPU dropped the 64-bit multiply and
   divide; a binary containing them dies on it unless the kernel emulates them.
   This compiler does not emit them, and `tools/check-68060-safe.py` verifies
-  any binary. Run it on every build, not once: one `%` on 64-bit operands
+  any binary (`--68881` adds the FPU forms a 68881/68882 lacks). Run it on every build, not once: one `%` on 64-bit operands
   brings the problem back.
 
 One measurement, for scale. The AMIX Quake port timed `timedemo demo1` on the
@@ -99,9 +99,16 @@ kernel; without one installed, they trap fatally. The symptom is that any
 64-bit division *by a variable* kills the process, while dividing by a constant
 is fine — because GCC folds that into a multiply and never calls libgcc at all.
 
-This is why the toolchain defaults to `--with-cpu=68060`. It has to be the
-default: `CFLAGS_FOR_TARGET` does not reach libgcc's own compile. Code built
-this way still runs on 68020/030/040, because it only ever avoids instructions.
+This is why the toolchain defaults to `--with-cpu=m68020-60`: the 68020
+instruction set and the 68881 FPU, tuned for the whole range, which keeps GCC
+off those forms. It has to be the default: `CFLAGS_FOR_TARGET` does not reach
+libgcc's own compile. The default used to be `--with-cpu=68060`, and that was
+wrong in the other direction: it made GCC use the FPU forms the 68040 and
+68060 added (`fdmove`, `fsadd`, `fdmul`...), which a 68881/68882 does not
+have, so a program that reached libgcc's floating-point helpers died with
+SIGSYS on a 68030. `tools/check-68060-safe.py --68881` checks for both, and
+`build-cross.sh` runs it on the installed runtime. `-m68060` is still there
+for code that will only ever run on a 68060.
 
 Anyone building m68k software for a 68060 without an ISP handler has the same
 problem, whatever their compiler.

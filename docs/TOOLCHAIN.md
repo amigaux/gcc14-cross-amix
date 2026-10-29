@@ -261,11 +261,25 @@ ISP handler wired in yet, so the unimplemented-instruction trap becomes a fatal
 signal. `Killed` rather than a bus error, which is why it read as memory
 exhaustion at first.
 
-The fix is `--with-cpu=68060`, and it has to be the compiler's **default**:
+The fix is to tune for the 68060, and it has to be the compiler's **default**:
 passing `CFLAGS_FOR_TARGET=-mcpu=68060` to a libgcc rebuild does not reach
-libgcc's own compile -- measured, the instructions survived it. Told the CPU is
-a 68060, GCC avoids those forms everywhere, and the result still runs on
-68020/030/040, because it only ever avoids instructions and never adds any.
+libgcc's own compile -- measured, the instructions survived it. Tuned for a
+68060, GCC avoids those forms everywhere, libgcc's `longlong.h` included.
+
+The first fix was `--with-cpu=68060`, on the reasoning that it only ever
+avoids instructions. For integer code that holds; for floating point it does
+not. It makes the 68060 the architecture as well, and GCC then uses the
+single- and double-rounding FPU forms the 68040 added (`fsmove`, `fdmove`,
+`fdadd`, `fdmul` and the rest), which a 68881/68882 does not have. A runtime
+built that way carries 491 of them in `libgcc.a` (`__floatundidf`, `__muldc3`,
+`__powidf2`...) and 123 in `libstdc++.a` (`unordered_map`'s rehash policy,
+`from_chars`, `hypotf`...), and a `make` that reached `__floatundidf` died with
+SIGSYS on a 68030 + 68882. So the default is now `--with-cpu=m68020-60`
+(the `m` is required; `config.gcc` knows the name only with it): the 68020
+instruction set and the 68881 FPU, tuned for 68020 through 68060. That avoids
+both, and `-m68060` remains an option for code that will only run on one.
+`tools/check-68060-safe.py --68881` checks a binary or archive for both, and
+`build-cross.sh` runs it on the installed runtime every time.
 
 Worth noting for the kernel side of this project family: a 68060 without the
 ISP cannot run *any* 68020-targeted C that divides 64-bit integers by a

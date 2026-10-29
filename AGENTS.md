@@ -25,11 +25,13 @@ produces a **working binary that behaves wrongly** rather than a build error:
   strides by 16. It is set in the specs so it cannot be forgotten in one
   translation unit. The symptom when it is missing: `printf` works, `fprintf`
   writes nothing, and the program stops without a message.
-- **`--with-cpu=68060` is a correctness setting and must be the default.**
+- **`--with-cpu=m68020-60` is a correctness setting and must be the default.**
   libgcc's 64-bit divide built for a 68020 uses instructions the 68060 removed;
   without Motorola's ISP in the kernel they trap fatally. `CFLAGS_FOR_TARGET`
-  does not reach libgcc's own compile — measured. Code built this way still
-  runs on 68020/030/040, because it only ever avoids instructions.
+  does not reach libgcc's own compile — measured. Not `--with-cpu=68060`: that
+  also makes GCC use the 68040/060-only FPU forms (`fdmove`, `fsadd`...), and
+  the runtime then dies with SIGSYS on a 68030 + 68882.
+  `tools/check-68060-safe.py --68881` checks both.
 - **The target is `m68k-elf`, not `m68k-linux-gnu`.** The Debian m68k compiler
   looks like a shortcut: its `libgcc_eh.a` asks a dynamic loader
   (`_dl_find_object`) for exception tables and locks with pthreads, and AMIX has

@@ -63,9 +63,20 @@ TWO WAYS TO GET A WRONG ANSWER, both closed here rather than documented:
   Candidates are printed with their surroundings for the other half: a run of
   increasing 16-bit values after a jmp is a table, not code.
 
-Usage: check-68060-safe.py <binary or objdump -d listing> [...]
-Exit status 0 if clean, 1 if any 64-bit form is present, 2 if the input could
-not be read as either.
+THE OTHER DIRECTION: --68881
+The 68040 and 68060 ADDED FPU forms the 68881/68882 never had: fsmove/fdmove,
+fsadd/fdadd and the rest of the single- and double-rounding arithmetic.  Code
+built -m68040 or -m68060 uses them freely, so a binary that is 68060-safe can
+still die on its first floating-point operation on a 68030 + 68882 (SIGSYS on
+AMIX).  They are FPU general operations, F200 + <ea>, whose extension word is
+opclass 000 or 010 with bit 6 of the opmode set; every 68881 opmode is below
+0x40.  Again the encoding, not the name: a prefix match on "fs"/"fd" would
+also catch fsin, fscale, fsglmul and fdbcc, which the 68881 has.
+
+Usage: check-68060-safe.py [--68881] <binary, archive or objdump -d listing> [...]
+Exit status 0 if clean, 1 if any 64-bit form is present (or, with --68881,
+any 68040/060-only FPU form), 2 if the input could not be read, 3 if the
+listing lost sync.
 """
 import os
 import re
@@ -101,10 +112,10 @@ def objdump_candidates():
 
 
 def listing_for(path):
-    """A disassembly listing, whether given one or an ELF file."""
+    """A disassembly listing, whether given one, an ELF file or an archive."""
     with open(path, "rb") as f:
-        magic = f.read(4)
-    if magic != b"\x7fELF":
+        magic = f.read(8)
+    if magic[:4] != b"\x7fELF" and magic != b"!<arch>\n":
         text = open(path, errors="replace").read()
         if "Disassembly of section" not in text:
             die("%s is neither an ELF file nor an objdump disassembly -- "
@@ -127,20 +138,36 @@ def listing_for(path):
 CODE_SECTIONS = (".text", ".init", ".fini", ".plt")
 SECTION = re.compile(r"^Disassembly of section (\S+):")
 LABEL = re.compile(r"^([0-9a-f]+) <([^>]+)>:")
+# An archive's listing names each member before its sections.
+MEMBER = re.compile(r"^(\S+):\s+file format ")
+
+args = sys.argv[1:]
+check_fpu = "--68881" in args
+paths = [a for a in args if a != "--68881"]
 
 bad = []
+fpu_bad = []
 total_long = 0
+total_fpu = 0
 desync = []          # labels the decoder did not land on
 pending_label = None
 
-for path in sys.argv[1:]:
+for path in paths:
     func = "?"
+    member = ""
     in_code = False
     lines = listing_for(path).split("\n")
     for idx, line in enumerate(lines):
+        m_mem = MEMBER.match(line)
+        if m_mem:
+            member = m_mem.group(1)
+            in_code = False
+            continue
         m_lbl = LABEL.match(line)
         if m_lbl:
             func = line.strip()
+            if member and member != path:
+                func = "%s %s" % (os.path.basename(member), func)
             # Remember where the next instruction is expected to begin.
             pending_label = (int(m_lbl.group(1), 16), m_lbl.group(2)) if in_code else None
             continue
@@ -165,6 +192,15 @@ for path in sys.argv[1:]:
         if len(words) < 2:
             continue
         op = int(words[0], 16)
+        # FPU general operation, coprocessor 1: opclass 000 (register source)
+        # or 010 (<ea> source); opmode bit 6 = a 68040/060 rounding form.
+        if check_fpu and (op & 0xFFC0) == 0xF200:
+            total_fpu += 1
+            ext = int(words[1], 16)
+            if (ext & 0xA000) == 0 and (ext & 0x0040):
+                ctx = [l for l in lines[max(0, idx - 3):idx + 4] if l.strip()]
+                fpu_bad.append((m.group(1), m.group(3), m.group(4), func, ctx))
+            continue
         # 0x4C00-0x4C7F is the long multiply/divide group; bit 6 picks divide.
         if (op & 0xFF80) != 0x4C00:
             continue
@@ -185,6 +221,15 @@ if desync:
         print("  ... and %d more" % (len(desync) - 8))
     sys.exit(3)
 
+def show(hits):
+    for addr, mnem, ops, func, ctx in hits[:12]:
+        print("\n  %s in %s" % (mnem, func))
+        for line in ctx:
+            marker = ">>" if line.lstrip().startswith(addr) else "  "
+            print("   %s %s" % (marker, line.rstrip()))
+    if len(hits) > 12:
+        print("\n  ... and %d more" % (len(hits) - 12))
+
 if total_long == 0:
     print("no long multiply or divide instructions at all -- nothing to check")
 
@@ -193,14 +238,18 @@ if bad:
     print("Each is printed with its surroundings: objdump decodes data as code,")
     print("and gcc puts switch tables in .text, so check for a jmp followed by a")
     print("run of increasing 16-bit values before believing any single hit.")
-    for addr, mnem, ops, func, ctx in bad[:12]:
-        print("\n  %s in %s" % (mnem, func))
-        for line in ctx:
-            marker = ">>" if line.lstrip().startswith(addr) else "  "
-            print("   %s %s" % (marker, line.rstrip()))
-    if len(bad) > 12:
-        print("\n  ... and %d more" % (len(bad) - 12))
-    sys.exit(1)
+    show(bad)
+else:
+    print("68060-safe: %d long multiply/divide instructions, none in a 64-bit form"
+          % total_long)
 
-print("68060-safe: %d long multiply/divide instructions, none in a 64-bit form"
-      % total_long)
+if check_fpu:
+    if fpu_bad:
+        print("NOT 68881-safe: %d FPU instruction(s) in a form only the 68040/060 have"
+              % len(fpu_bad))
+        show(fpu_bad)
+    else:
+        print("68881-safe: %d FPU operations, none in a 68040/060-only form"
+              % total_fpu)
+
+sys.exit(1 if bad or fpu_bad else 0)

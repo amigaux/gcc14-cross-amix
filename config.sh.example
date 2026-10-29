@@ -30,9 +30,12 @@ TC_TARGET="m68k-elf"
 MODERN_PREFIX="m68k-linux-gnu-"
 MODERN_GCC="m68k-linux-gnu-gcc-14"
 
-# CPU the probes are built for.  The target machine runs a 68060 kernel; 68030
-# is the lowest-common-denominator setting that also runs on a stock A3000UX.
-AMIX_CPU="-mcpu=68060"
+# CPU the probes are built for.  -m68020-60 runs on every AMIX machine, 68030 +
+# 68881/68882 included, and is tuned for the 68060.  -mcpu=68060 is for code
+# that will only run on a 68060: it uses FPU forms only the 68040/060 have, and
+# dies on a 68030.  The runtime libraries do not follow this setting; they are
+# built for the whole range.
+AMIX_CPU="-m68020-60"
 
 # This host's address as seen from the AMIX machine, for TFTP transfers.
 # Find it with:  ip route get $AMIX_HOST
