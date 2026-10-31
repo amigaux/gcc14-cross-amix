@@ -76,7 +76,7 @@ __asm__(
 
 #else /* __PIC__: amix_initS.o, for shared objects */
 
-/* Three things differ from the executable's copy above.
+/* Four things differ from the executable's copy above.
  *
  * The linker script for -shared defines no __init_array_start and friends: a
  * modern dynamic linker reads DT_INIT_ARRAY instead, so nothing needed them.
@@ -95,6 +95,12 @@ __asm__(
  * The calls from the .init and .fini fragments are PC-relative, so the text
  * needs no relocation at load time.
  *
+ * The walk does not run from DT_INIT itself.  AMIX's runtime linker calls
+ * DT_INIT before libc.so.1 is consistent with the program -- stdio, errno,
+ * _environ and malloc among others are rebound only afterwards -- so the
+ * .init fragment hands the walk to __amix_dso_init in the program, which runs
+ * it during the program's start-up.  compat/amix_dso.c has the details.
+ *
  * Being an endfile still puts the .init fragment after crtbeginS.o's, the same
  * order as in an executable. */
 #define AMIX_HIDDEN __attribute__((visibility("hidden")))
@@ -111,6 +117,21 @@ AMIX_HIDDEN void __amix_run_init_array(void)
 	for (p = __amix_init_array_start; p < __amix_init_array_end; p++) {
 		if (*p != 0) (**p)();
 	}
+}
+
+struct amix_dso_init {
+	struct amix_dso_init *next;
+	void (*run)(void);
+};
+
+/* In the program: libamixc99's amix_dso.o. */
+extern void __amix_dso_init(struct amix_dso_init *);
+
+static struct amix_dso_init amix_this_object = { 0, __amix_run_init_array };
+
+AMIX_HIDDEN void __amix_defer_init_array(void)
+{
+	__amix_dso_init(&amix_this_object);
 }
 
 AMIX_HIDDEN void __amix_run_fini_array(void)
@@ -139,7 +160,7 @@ __asm__(
 	"	.long 0\n"
 	AMIX_LABEL(".fini_array", "__amix_fini_array_end")
 	"	.section .init,\"ax\",@progbits\n"
-	"	bsr.l __amix_run_init_array\n"
+	"	bsr.l __amix_defer_init_array\n"
 	"	.section .fini,\"ax\",@progbits\n"
 	"	bsr.l __amix_run_fini_array\n"
 	"	.text\n"

@@ -846,14 +846,34 @@ gets the same `--hash-style=sysv -z norelro --build-id=none` as a program.
 `--warn-textrel` reports an object compiled without `-fPIC`. AMIX loads such a
 library, but each process then gets its own copy of the text.
 
-**Constructors run from `DT_INIT`.** The runtime linker in `libc.so.1` calls
-each library's `DT_INIT` when it loads it, before the program's `_start`. It
+**Constructors run during the program's start-up, not from `DT_INIT`.** The
+runtime linker in `libc.so.1` calls each library's `DT_INIT` from `_rtld`. It
 also registers a routine with `atexit` that calls each `DT_FINI` (`_rtld` and
 `_rt_do_exit`, offsets 48 and 52 of a link-map entry). It never reads
-`DT_INIT_ARRAY`. So `amix_initS.o` walks `.init_array` and `.fini_array` from
-`_init` and `_fini`, as `amix_init.o` does in a program. The `-shared` linker
-script defines no `__init_array_start`, so the object brackets the arrays
-itself; `compat/amix_init.c` says how.
+`DT_INIT_ARRAY`, so `amix_initS.o` brackets the arrays itself (the `-shared`
+linker script defines no `__init_array_start`; `compat/amix_init.c` says
+how), and `_fini` walks `.fini_array`.
+
+`_init` cannot walk `.init_array` there and then. `_rtld` runs the `DT_INIT`s
+before `_rt_setup` calls `_rt_setaddr`. That function points 25 of libc's own
+references at the program's copies of the data: `__iob`, `_lastbuf`, `_smbuf`,
+`_bufendtab`, `errno`, `_environ`, `_fp_hw`, `__flt_rounds`, `__ctype`, the
+`getopt` and timezone variables, `_cur_locale`, and `malloc`, `free`, `calloc`
+and `realloc`. Until then the library already uses the program's copies and
+libc still its own. A constructor's `printf` filled libc's private `stdout`,
+its `fflush` flushed the program's, and the text never appeared. That was
+measured on a 68030 and a 68060, though the constructors had run. `crt1.o` has
+not set `_environ` yet either.
+
+So `_init` hands the walk to `__amix_dso_init`. That function lives in
+`libamixc99`'s `amix_dso.o`, which every library refers to, so the program's
+link pulls it in and exports it. It keeps the libraries in the order the
+runtime linker initialised them. The program's own start-up runs them from its
+`.init_array` at priority 100: after `crt1.o` has set `_environ` and libc is
+consistent, after libstdc++'s standard streams (priority 90), and before the
+program's own constructors. Like those, they run before `__fpstart`. A library
+that `dlopen` loads later runs at once. A program that uses no such library
+does not link `amix_dso.o` and is unchanged.
 
 **Weak references are safe.** `crtbeginS.o` refers weakly to
 `__register_frame_info` and the `_ITM_` functions. AMIX's own libraries have no
