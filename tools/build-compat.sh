@@ -49,6 +49,14 @@ $CC -O2 $INC -U__linux__ -U__gnu_linux__ -Ulinux -D__amix__ -D__svr4__ \
 mkdir -p "$TC_PREFIX/$TC_TARGET/lib"
 cp "$OUT/amix_init.o" "$TC_PREFIX/$TC_TARGET/lib/amix_init.o"
 echo "build-compat.sh: installed $TC_PREFIX/$TC_TARGET/lib/amix_init.o"
+# amix_initS.o is the same file built for shared objects, which gcc -shared
+# links instead.  Built in its own directory, so that the archive below, which
+# takes every object in $OUT, does not pick it up.
+mkdir -p "$OUT/pic"
+$CC -O2 -fPIC $INC -U__linux__ -U__gnu_linux__ -Ulinux -D__amix__ -D__svr4__ \
+	-c -o "$OUT/pic/amix_initS.o" compat/amix_init.c
+cp "$OUT/pic/amix_initS.o" "$TC_PREFIX/$TC_TARGET/lib/amix_initS.o"
+echo "build-compat.sh: installed $TC_PREFIX/$TC_TARGET/lib/amix_initS.o"
 
 for src in compat/*.c; do
 	[ "$src" = "compat/amix_init.c" ] && continue

@@ -61,18 +61,35 @@ def replace(section, value):
 # .init fragment that walks .init_array, which AMIX's 1991 crt1.o has never
 # heard of.  Without it NO C++ static constructor runs -- see
 # compat/amix_init.c for how a linker-script section rename causes that.
+#
+# -shared gets the shared-object set instead, as on any SVR4: no crt1.o and so
+# no _start, and the PIC builds of the rest.  crti.o and crtn.o still bracket
+# _init and _fini, which the linker records as DT_INIT and DT_FINI; AMIX's
+# runtime linker calls those when it loads the object and at exit.  It knows
+# nothing of .init_array, so amix_initS.o walks the arrays from there.  It is
+# an endfile, not a startfile: see compat/amix_init.c for why.
 replace("startfile",
-        "%{!shared:%{!nostdlib:%{!nostartfiles:%R/usr/ccs/lib/crt1.o %R/usr/ccs/lib/crti.o}}}"
-        " crtbegin.o%s %{!nostdlib:%{!nostartfiles:amix_init.o%s}}")
+        "%{!nostdlib:%{!nostartfiles:%{shared:%R/usr/ccs/lib/crti.o crtbeginS.o%s;"
+        ":%R/usr/ccs/lib/crt1.o %R/usr/ccs/lib/crti.o crtbegin.o%s amix_init.o%s}}}")
 replace("endfile",
-        "crtend.o%s %{!shared:%{!nostdlib:%{!nostartfiles:%R/usr/ccs/lib/crtn.o}}}")
+        "%{!nostdlib:%{!nostartfiles:%{shared:amix_initS.o%s crtendS.o%s %R/usr/ccs/lib/crtn.o;"
+        ":crtend.o%s %R/usr/ccs/lib/crtn.o}}}")
 # usr/ccs/lib holds libc.so, the link-time stub for the shared libc, and is not
 # on any default search path.
 # libamixc99 holds what SVR4.0's libc is missing -- snprintf, vsnprintf,
 # usleep, __cxa_atexit.  Named before -lc because it calls into libc and not
 # the other way round.
+#
+# A shared object links neither, as AMIX's own libsocket.so and libX11.so do
+# not: they have no DT_NEEDED at all.  libc.so here is an archive -- the shared
+# libc.so.1 plus static members built without PIC -- and libc.so.1 is the
+# runtime linker, so it is always loaded anyway.  What the object leaves
+# undefined, the executable supplies: ld pulls a shared library's undefined
+# symbols out of -lamixc99 and -lc into the program and exports them.  libgcc
+# is still linked: its members are hidden, and the integer helpers are
+# position-independent.
 replace("lib",
-        "%{!nostdlib:%{!nodefaultlibs:-L%R/usr/ccs/lib -L%R/usr/lib -lamixc99 -lc}}")
+        "%{!nostdlib:%{!nodefaultlibs:-L%R/usr/ccs/lib -L%R/usr/lib %{!shared:-lamixc99 -lc}}}")
 # The platform identifies itself.  A generic m68k-elf compiler defines nothing
 # that says "AMIX", so portable code has no way to select a path for this
 # target -- and code that IS written for it, like a crash handler that reads
@@ -130,9 +147,17 @@ replace("self_spec", "%{!mno-align-int:-malign-int} %{!mstrict-align:-mno-strict
 # Read off the machine's own /usr/bin/ls: libc.so.1 IS the runtime linker, text
 # starts at 0x80000000, and the hash table is the classic SysV one.  Nothing
 # AMIX ships carries a RELRO segment or a build-id note.
+#
+# A shared object has no interpreter and is linked at 0, as AMIX's own are.
+# -shared has to reach ld even with -nostdlib, or the output is an executable.
+# Name it with -Wl,-soname,libfoo.so.1.  --warn-textrel says when an object
+# built without -fPIC went in: AMIX loads such a library, but every process
+# then gets its own copy of the text.
 replace("link",
-        "%{!nostdlib:--dynamic-linker /usr/lib/libc.so.1 -Ttext-segment=0x80000000"
-        " --hash-style=sysv -z norelro --build-id=none}")
+        "%{shared:-shared %{symbolic:-Bsymbolic} --hash-style=sysv -z norelro"
+        " --build-id=none --warn-textrel;"
+        ":%{!nostdlib:--dynamic-linker /usr/lib/libc.so.1 -Ttext-segment=0x80000000"
+        " --hash-style=sysv -z norelro --build-id=none}}")
 open(path, "w").write(text)
 PY
 

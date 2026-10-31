@@ -25,7 +25,14 @@
  * separate object named in the compiler's specs rather than a member of
  * libamixc99: a library member is pulled in only when something references it,
  * and nothing references a constructor.
+ *
+ * SHARED OBJECTS need the same walk, from DT_INIT and DT_FINI: AMIX's runtime
+ * linker calls those for every object it loads, and has never heard of
+ * DT_INIT_ARRAY either.  The same file built with -fPIC is amix_initS.o, which
+ * the specs link into `gcc -shared` output instead -- see the second half.
  */
+
+#ifndef __PIC__
 
 /* Provided by the linker script, and weak so this still links if a future
  * script stops emitting them. */
@@ -66,3 +73,90 @@ __asm__(
 	"	jsr __amix_run_fini_array\n"
 	"	.text\n"
 );
+
+#else /* __PIC__: amix_initS.o, for shared objects */
+
+/* Three things differ from the executable's copy above.
+ *
+ * The linker script for -shared defines no __init_array_start and friends: a
+ * modern dynamic linker reads DT_INIT_ARRAY instead, so nothing needed them.
+ * This object brackets the arrays itself.  It is an endfile, linked after every
+ * object and library, so its end labels in plain .init_array and .fini_array
+ * land after everyone else's entries.  Its start labels go in .init_array.0 and
+ * .fini_array.0, which the script's SORT_BY_INIT_PRIORITY places ahead of every
+ * other entry: priority 0 is reserved, and nothing else uses it.  Each start
+ * label carries a null entry, which the walk skips.  Without it an object with
+ * no constructors would have an empty .init_array, and ld warns about that on
+ * every link.
+ *
+ * Every symbol is hidden, so each shared object walks its own arrays and
+ * exports nothing that could take the place of the executable's copy.
+ *
+ * The calls from the .init and .fini fragments are PC-relative, so the text
+ * needs no relocation at load time.
+ *
+ * Being an endfile still puts the .init fragment after crtbeginS.o's, the same
+ * order as in an executable. */
+#define AMIX_HIDDEN __attribute__((visibility("hidden")))
+
+extern void (*__amix_init_array_start[])(void) AMIX_HIDDEN;
+extern void (*__amix_init_array_end[])(void) AMIX_HIDDEN;
+extern void (*__amix_fini_array_start[])(void) AMIX_HIDDEN;
+extern void (*__amix_fini_array_end[])(void) AMIX_HIDDEN;
+
+AMIX_HIDDEN void __amix_run_init_array(void)
+{
+	void (**p)(void);
+
+	for (p = __amix_init_array_start; p < __amix_init_array_end; p++) {
+		if (*p != 0) (**p)();
+	}
+}
+
+AMIX_HIDDEN void __amix_run_fini_array(void)
+{
+	void (**p)(void);
+
+	/* Reverse order, as destruction should be. */
+	for (p = __amix_fini_array_end; p > __amix_fini_array_start; ) {
+		p--;
+		if (*p != 0) (**p)();
+	}
+}
+
+/* crtbeginS.o's .fini fragment calls __cxa_finalize(__dso_handle), if it can
+ * find one, to run this object's C++ static destructors before the object goes
+ * away.  The executable exports libamixc99's, and that one pops the whole list,
+ * running the entries of the object it is given and dropping everyone else's:
+ * a library that calls it at exit loses the destructors of every object
+ * registered after its own.  This weak, hidden no-op takes its place inside
+ * the object, so its static destructors run from libamixc99's exit hook along
+ * with everyone else's, while it is still loaded.  The cost: dlclose does not
+ * run them, so a library with C++ static objects must stay loaded until exit. */
+AMIX_HIDDEN __attribute__((weak)) void __cxa_finalize(void *dso)
+{
+	(void) dso;
+}
+
+#define AMIX_LABEL(sec, name) \
+	"	.section " sec ",\"aw\"\n" \
+	"	.p2align 2\n" \
+	"	.globl " name "\n" \
+	"	.hidden " name "\n" \
+	name ":\n"
+
+__asm__(
+	AMIX_LABEL(".init_array.0", "__amix_init_array_start")
+	"	.long 0\n"
+	AMIX_LABEL(".init_array", "__amix_init_array_end")
+	AMIX_LABEL(".fini_array.0", "__amix_fini_array_start")
+	"	.long 0\n"
+	AMIX_LABEL(".fini_array", "__amix_fini_array_end")
+	"	.section .init,\"ax\",@progbits\n"
+	"	bsr.l __amix_run_init_array\n"
+	"	.section .fini,\"ax\",@progbits\n"
+	"	bsr.l __amix_run_fini_array\n"
+	"	.text\n"
+);
+
+#endif /* __PIC__ */

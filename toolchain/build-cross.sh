@@ -206,14 +206,34 @@ if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ] || [ "$(cat "$ABI_STAMP" 2>/dev
 	echo "== gcc installed"
 fi
 
+# ---------------------------------------------------------- shared objects ---
+# gcc -shared links crtbeginS.o and crtendS.o, the PIC builds of crtbegin.o and
+# crtend.o.  m68k-elf's libgcc does not make them -- in GCC's view the target
+# has no shared libraries -- but its Makefile has the rules, and -fPIC is all
+# the S variants add on targets that do build them.  This is outside the block
+# above so that a toolchain built before it gets them without a rebuild, and
+# the specs and compat objects are brought up to date for the same reason.
+GCCLIB="$TC_PREFIX/lib/gcc/$TARGET/$("$TC_PREFIX/bin/$TARGET-gcc" -dumpversion)"
+if [ ! -f "$GCCLIB/crtbeginS.o" ] || [ ! -f "$GCCLIB/crtendS.o" ]; then
+	LIBGCC_BUILD="$WORK/build-gcc/$TARGET/libgcc"
+	[ -f "$LIBGCC_BUILD/Makefile" ] || {
+		echo "build-cross.sh: no libgcc build tree in $LIBGCC_BUILD to make crtbeginS.o in;" >&2
+		echo "  rm -rf $TC_PREFIX and run this again" >&2
+		exit 1
+	}
+	make -C "$LIBGCC_BUILD" MAKEINFO=true CRTSTUFF_T_CFLAGS_S=-fPIC crtbeginS.o crtendS.o
+	cp "$LIBGCC_BUILD/crtbeginS.o" "$LIBGCC_BUILD/crtendS.o" "$GCCLIB/"
+fi
+[ -f "$TC_PREFIX/$TARGET/lib/amix_initS.o" ] || "$REPO/tools/build-compat.sh"
+"$REPO/toolchain/install-specs.sh" >/dev/null
+
 # The runtime is linked into every program, so it has to run on every CPU in
 # the range: no 64-bit multiply/divide for the 68060, no 68040/060-only FPU
 # forms for the 68881/68882.  Checked on every run, not only after a build: a
 # prefix built by an earlier version of this script, --with-cpu=68060, passes
 # the test above (libstdc++.a present, amix-abi.h unchanged) and would
 # otherwise be kept.
-GCCLIB=$(dirname "$("$TC_PREFIX/bin/$TARGET-gcc" -print-libgcc-file-name)")
-RUNTIME=("$GCCLIB"/libgcc.a "$GCCLIB"/crt*.o "$TC_PREFIX/$TARGET/lib"/lib{stdc++,stdc++exp,supc++,amixc99}.a "$TC_PREFIX/$TARGET/lib/amix_init.o")
+RUNTIME=("$GCCLIB"/libgcc.a "$GCCLIB"/crt*.o "$TC_PREFIX/$TARGET/lib"/lib{stdc++,stdc++exp,supc++,amixc99}.a "$TC_PREFIX/$TARGET/lib"/amix_init{,S}.o)
 python3 "$REPO/tools/check-68060-safe.py" --68881 "${RUNTIME[@]}" || {
 	echo "!! the runtime above is not safe on every 68020..68060 + 68881 machine." >&2
 	echo "!! If it was built by an older version of this script, rebuild it:" >&2
