@@ -174,8 +174,8 @@ SVR4 offers. It is meant for a machine on a network you control.
 
 `probe/` is the test battery, and it is how every fact in `docs/TOOLCHAIN.md`
 was established. Each program asks one question and prints the answer, flushed,
-in an order where a crash names the step it died in. Two of them
-(`probe/compat.c`, `probe/stl.cpp`) also run natively via
+in an order where a crash names the step it died in. Some of them
+(`probe/compat.c`, `probe/cxa.c`, `probe/stl.cpp`) also run natively via
 `tools/test-compat-host.sh` — not redundancy: the formatter's battery passed on
 the host and died on the Amiga, and that difference is what localised the CPU
 fault.

@@ -37,19 +37,47 @@ static int amix_cxa_hooked;
  * one wins. */
 void *__dso_handle __attribute__((weak)) = &__dso_handle;
 
+/* Run and remove the entries registered for one object, newest first, or
+ * every entry when dso is 0 -- the exit hook below, or a caller that wants
+ * them all.  A shared library's DT_FINI calls this with its own handle, through
+ * crtbeginS.o, at exit and when dlclose unloads it; entries of other objects
+ * stay where they are.  The search starts again from the newest entry after
+ * every call, because a destructor may register more work or finalize another
+ * object. */
 void __cxa_finalize(void *dso)
 {
-	/* Reverse order, and re-read the count each time: a destructor is
-	 * allowed to register more work. */
-	while (amix_cxa_count > 0) {
-		struct amix_cxa_entry e = amix_cxa_list[--amix_cxa_count];
-		if (dso == 0 || e.dso == dso) e.func(e.arg);
+	for (;;) {
+		struct amix_cxa_entry e;
+		unsigned i = amix_cxa_count, j;
+
+		while (i > 0 && dso != 0 && amix_cxa_list[i - 1].dso != dso) i--;
+		if (i == 0) return;
+		e = amix_cxa_list[i - 1];
+		for (j = i; j < amix_cxa_count; j++) amix_cxa_list[j - 1] = amix_cxa_list[j];
+		amix_cxa_count--;
+		e.func(e.arg);
 	}
 }
 
 static void amix_cxa_run_all(void)
 {
 	__cxa_finalize(0);
+}
+
+/* The exit hook has to run before stdio's _cleanup, or a destructor's output
+ * is buffered after the last flush and lost.  exit() runs atexit handlers
+ * newest first, and AMIX's crt1.o registers _cleanup just before it calls
+ * _init -- so the hook is registered from the program's own .init_array,
+ * which _init walks, with the first priority a program may use, ahead of
+ * every ordinary constructor.  Registering it on the first __cxa_atexit
+ * instead is too early when that call comes from a shared library: the
+ * runtime linker runs libraries' DT_INIT before the program starts, and the
+ * hook would then run after _cleanup.  __cxa_atexit still registers one if
+ * this has not run yet, so destructors run even in a program started some
+ * other way; the second registration finds the list empty. */
+__attribute__((constructor(101))) static void amix_cxa_hook(void)
+{
+	if (atexit(amix_cxa_run_all) == 0) amix_cxa_hooked = 1;
 }
 
 int __cxa_atexit(amix_cxa_func func, void *arg, void *dso)
