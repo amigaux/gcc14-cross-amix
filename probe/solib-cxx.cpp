@@ -7,12 +7,18 @@
  * __cxa_atexit, which the executable supplies from libamixc99.
  */
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 struct Registry {
 	int value;
-	Registry() : value(7)
+	int env_seen;
+	Registry() : value(7), env_seen(getenv("PATH") != 0)
 	{
-		printf("solib-cxx: static object constructed\n");
+		static const char msg[] = "solib-cxx: static object constructed (write)\n";
+
+		write(1, msg, sizeof msg - 1);
+		printf("solib-cxx: static object constructed (stdio)\n");
 		fflush(stdout);
 	}
 	~Registry()
@@ -27,4 +33,9 @@ static Registry registry;
 extern "C" int solib_cxx_value(void)
 {
 	return registry.value;
+}
+
+extern "C" int solib_cxx_env(void)
+{
+	return registry.env_seen;
 }

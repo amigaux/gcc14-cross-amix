@@ -9,6 +9,7 @@
 #include <stdio.h>
 
 extern "C" int solib_cxx_value(void);
+extern "C" int solib_cxx_env(void);
 
 struct Mine {
 	Mine()  { printf("main-cxx: static object constructed\n"); fflush(stdout); }
@@ -19,9 +20,10 @@ static Mine mine;
 
 int main()
 {
-	int value = solib_cxx_value();
+	int value = solib_cxx_value(), env = solib_cxx_env();
+	int ok = value == 7 && env == 1;
 
-	printf("main-cxx: value=%d (7) -> %s\n", value, value == 7 ? "PASS" : "FAIL");
+	printf("main-cxx: value=%d (7) env=%d (1) -> %s\n", value, env, ok ? "PASS" : "FAIL");
 	fflush(stdout);
-	return value == 7 ? 0 : 1;
+	return ok ? 0 : 1;
 }

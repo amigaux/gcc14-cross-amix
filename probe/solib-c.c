@@ -3,7 +3,10 @@
  * Built by tools/test-shared.sh with `gcc -shared -fPIC`.  AMIX's runtime
  * linker runs a shared object's DT_INIT when it loads it and its DT_FINI at
  * exit, and knows nothing of .init_array -- so the constructor below runs only
- * if amix_initS.o is in the link and walks the array from _init.
+ * because amix_initS.o hands the array from _init to the program, which walks
+ * it during its own start-up.  The constructor reports itself twice: with
+ * write(2), which works whenever it runs, and with stdio, which works only
+ * once libc.so.1 is consistent with the program.
  *
  * Each function also exercises one thing a shared library has to get right:
  * initialised pointers (R_68K_RELATIVE), a 64-bit divide from libgcc (linked
@@ -12,14 +15,21 @@
  * libamixc99.
  */
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 static int ready;
+static int env_seen;
 static const char *words[] = { "zero", "one", "two" };
 
 __attribute__((constructor)) static void solib_c_init(void)
 {
+	static const char msg[] = "solib-c: constructor ran (write)\n";
+
+	write(1, msg, sizeof msg - 1);
 	ready = 42;
-	printf("solib-c: constructor ran\n");
+	env_seen = getenv("PATH") != 0;
+	printf("solib-c: constructor ran (stdio)\n");
 	fflush(stdout);
 }
 
@@ -32,6 +42,13 @@ __attribute__((destructor)) static void solib_c_fini(void)
 int solib_c_ready(void)
 {
 	return ready;
+}
+
+/* Whether the constructor saw the environment.  crt1.o sets it, so 1 means
+ * the constructor ran after the program's start-up, as it should. */
+int solib_c_env(void)
+{
+	return env_seen;
 }
 
 const char *solib_c_word(int i)

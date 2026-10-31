@@ -11,11 +11,14 @@
 #
 #   copy build/test-shared/ to the machine, then there:  sh run-shared.sh
 #
-# Expected there, for each program: the constructor lines before main's line,
-# main's line ending in PASS, the destructor lines after it, "exit status: 0".
-# A missing constructor line, or a FAIL, means the library's DT_INIT did not
-# walk its .init_array.  The C++ destructors come first, newest first, from
-# libamixc99's exit hook; solib-c's C destructor comes last, from its DT_FINI.
+# Expected there, for each program: each library constructor's two lines,
+# "(write)" then "(stdio)", before main's line; main's line with env=1 and
+# ending in PASS; the destructor lines after it; "exit status: 0".  A
+# "(write)" line without its "(stdio)" line, or env=0, means the constructor
+# ran from the runtime linker's DT_INIT, before libc was consistent with the
+# program.  No constructor line at all means .init_array was not walked.  The
+# C++ destructors come first, newest first, from libamixc99's exit hook;
+# solib-c's C destructor comes last, from its DT_FINI.
 #
 # The programs are linked with g++ because the C++ library uses the C++
 # runtime, and a shared library leaves that to the executable.
