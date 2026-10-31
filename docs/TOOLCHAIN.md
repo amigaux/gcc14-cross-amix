@@ -821,3 +821,92 @@ Either one ends the process: SIGKILL on the default kernel, and SIGSEGV with the
 opt-in isp060 pass, by design. The flag leaves data layout alone, and GCC's
 m68k back end never emits `cas2` (`sync.md` has only `cas`), so this default
 creates no new case.
+
+## Shared libraries: `gcc -shared`
+
+```sh
+m68k-elf-gcc -shared -fPIC -Wl,-soname,libfoo.so.1 -o libfoo.so.1 foo.c
+m68k-elf-gcc -o prog prog.c -L. -lfoo -Wl,-rpath,/usr/local/lib
+```
+
+AMIX's runtime linker finds the library by `DT_RPATH` or `LD_LIBRARY_PATH`.
+A program is linked the ordinary way and comes out exactly as before: the
+specs change nothing unless `-shared` is given.
+
+With `-shared` the driver links what an SVR4 `cc -G` links, with GCC's runtime
+in PIC form:
+
+| Start | | End |
+|---|---|---|
+| AMIX `crti.o`, `crtbeginS.o` | objects, `-lgcc` | `amix_initS.o`, `crtendS.o`, AMIX `crtn.o` |
+
+It links no `crt1.o` (so no `_start`), no `libc.so` and no `libamixc99`. The
+output has no interpreter, is linked at 0 as AMIX's own libraries are, and
+gets the same `--hash-style=sysv -z norelro --build-id=none` as a program.
+`--warn-textrel` reports an object compiled without `-fPIC`. AMIX loads such a
+library, but each process then gets its own copy of the text.
+
+**Constructors run from `DT_INIT`.** The runtime linker in `libc.so.1` calls
+each library's `DT_INIT` when it loads it, before the program's `_start`. It
+also registers a routine with `atexit` that calls each `DT_FINI` (`_rtld` and
+`_rt_do_exit`, offsets 48 and 52 of a link-map entry). It never reads
+`DT_INIT_ARRAY`. So `amix_initS.o` walks `.init_array` and `.fini_array` from
+`_init` and `_fini`, as `amix_init.o` does in a program. The `-shared` linker
+script defines no `__init_array_start`, so the object brackets the arrays
+itself; `compat/amix_init.c` says how.
+
+**Weak references are safe.** `crtbeginS.o` refers weakly to
+`__register_frame_info` and the `_ITM_` functions. AMIX's own libraries have no
+weak symbols at all. Its runtime linker treats an unresolved `STB_WEAK` symbol
+as 0 rather than failing (`do_reloc`, after the `_lookup` call).
+
+**The C and C++ runtimes stay in the program.** AMIX's own libraries have no
+`DT_NEEDED`, and a library built here has none either. `libc.so` at link time
+is an archive: `libc.so.1` plus static members built without PIC. What a
+library leaves undefined, the program supplies. When the program links
+against the library, `ld` pulls those symbols out of `libamixc99.a`,
+`libc.so` or `libstdc++.a` and exports them: `snprintf`, `__cxa_atexit`,
+`__gxx_personality_v0`. Four consequences:
+
+- A program that uses a C++ library links with `g++`, even if the program
+  itself is C. Otherwise `ld` stops with `undefined reference to
+  __gxx_personality_v0`. A destructor that calls any C function needs it:
+  AMIX's headers do not mark C functions as non-throwing, so the call inside
+  a `noexcept` destructor gets an exception table.
+- Build a C++ library with `gcc -shared`, or `g++ -shared -nostdlib++`. Plain
+  `g++ -shared` adds `-lstdc++ -lm` and copies a static, non-PIC C++ runtime
+  into the library, and `--warn-textrel` says so.
+- A library opened with `dlopen` gets only what the program happens to export.
+- `libgcc` is linked into each library. Its members are hidden, and its
+  integer helpers (`__divdi3` and the rest) have no absolute relocations.
+
+**C++ static destructors run at exit, from `libamixc99`.** A library's static
+objects register with `__cxa_atexit` like the program's own, and one exit
+hook runs them all in reverse order of construction. `crtbeginS.o` would call
+`__cxa_finalize` from the library's `DT_FINI`. `libamixc99`'s version drops
+every other object's entries from the list, so `amix_initS.o` gives each
+library a hidden no-op in its place. `dlclose` therefore does not run them: a
+library with C++ static objects must stay loaded until exit.
+
+**Exceptions do not cross a library.** The unwinder is in `libgcc.a`, built
+with hidden symbols, so each program has a private copy. A shared library
+cannot register its `.eh_frame` with that copy, and an exception thrown in or
+through a library's frames ends in `terminate`. Making that work needs a shared
+`libgcc_s`, which is not built.
+
+**Function addresses differ across the boundary.** Measured on AMIX 2.1c. When
+a program takes the address of a library function, `ld` gives the program a
+canonical address in its own PLT. AMIX's runtime linker resolves the library's
+references to the library's own definition, so the two addresses compare
+unequal. libXt's `_XtInherit` is the known case. X11's own fix also works
+here: link the compared function into every client from a small static
+archive, and the library's references then bind to the program's copy.
+
+`tools/test-shared.sh` builds a C library with a constructor and a destructor
+(`probe/solib-c.c`) and a C++ library with a static object
+(`probe/solib-cxx.cpp`). It links two programs against them and checks the
+results with `readelf`: `ET_DYN`, the `SONAME`, no interpreter, `DT_INIT` and
+`DT_FINI`, no text relocations, nothing of the startup code exported, and
+every undefined symbol defined by the program or `libc.so.1`. It stages
+everything in `build/test-shared/` with `run-shared.sh`, to be copied to the
+machine and run there.

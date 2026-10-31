@@ -180,12 +180,18 @@ in an order where a crash names the step it died in. Two of them
 the host and died on the Amiga, and that difference is what localised the CPU
 fault.
 
+`tools/test-shared.sh` builds two shared libraries and two programs that use
+them, checks them with `readelf` on the host, and stages them for a run on the
+machine.
+
 ## Status
 
 Working: C and C++ compilation and linking, `libgcc`, `libsupc++`, a **hosted**
 `libstdc++` with the standard containers, exceptions, RTTI, and the compat
 layer (`snprintf`, `vsnprintf`, `usleep`, `stdint.h`, C++ linkage wrappers for
 AMIX's C headers). `probe/stl.cpp` is the acceptance test and it passes.
+Shared libraries build with `gcc -shared -fPIC`, constructors included; see
+`docs/TOOLCHAIN.md` for what they may and may not do.
 
 Known and unfixed: `fprintf` reaches AMIX's own formatter, which predates C99
 and mis-handles `ll` conversions -- the compat layer replaces `snprintf` and
