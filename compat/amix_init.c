@@ -124,20 +124,6 @@ AMIX_HIDDEN void __amix_run_fini_array(void)
 	}
 }
 
-/* crtbeginS.o's .fini fragment calls __cxa_finalize(__dso_handle), if it can
- * find one, to run this object's C++ static destructors before the object goes
- * away.  The executable exports libamixc99's, and that one pops the whole list,
- * running the entries of the object it is given and dropping everyone else's:
- * a library that calls it at exit loses the destructors of every object
- * registered after its own.  This weak, hidden no-op takes its place inside
- * the object, so its static destructors run from libamixc99's exit hook along
- * with everyone else's, while it is still loaded.  The cost: dlclose does not
- * run them, so a library with C++ static objects must stay loaded until exit. */
-AMIX_HIDDEN __attribute__((weak)) void __cxa_finalize(void *dso)
-{
-	(void) dso;
-}
-
 #define AMIX_LABEL(sec, name) \
 	"	.section " sec ",\"aw\"\n" \
 	"	.p2align 2\n" \

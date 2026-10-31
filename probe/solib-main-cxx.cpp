@@ -2,9 +2,9 @@
  * against the C++ test library.
  *
  * Both objects register their destructors with __cxa_atexit, into the one
- * list in the executable, and the library's DT_FINI then calls
- * __cxa_finalize for its own entries.  At exit both destructor lines should
- * appear.
+ * list in the executable.  At exit libamixc99's hook runs both, the program's
+ * first, before stdio's _cleanup; the library's DT_FINI then calls
+ * __cxa_finalize for its own entries and finds none left.
  */
 #include <stdio.h>
 

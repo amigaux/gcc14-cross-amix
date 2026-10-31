@@ -14,7 +14,8 @@
 # Expected there, for each program: the constructor lines before main's line,
 # main's line ending in PASS, the destructor lines after it, "exit status: 0".
 # A missing constructor line, or a FAIL, means the library's DT_INIT did not
-# walk its .init_array.
+# walk its .init_array.  The C++ destructors come first, newest first, from
+# libamixc99's exit hook; solib-c's C destructor comes last, from its DT_FINI.
 #
 # The programs are linked with g++ because the C++ library uses the C++
 # runtime, and a shared library leaves that to the executable.
@@ -62,7 +63,7 @@ for lib in libsolibc.so.1 libsolibcxx.so.1; do
 	check_not "no text relocations" "$R" 'TEXTREL'
 	check_not "no NEEDED, as AMIX's own libraries have none" "$R" '\(NEEDED\)'
 	check_not "the startup code exports nothing" "$R" \
-		' (__amix_[a-z_]+|__cxa_finalize|__dso_handle|frame_dummy|__divdi3)$'
+		' [0-9]+ (__amix_[a-z_]+|__cxa_finalize|__dso_handle|frame_dummy|__divdi3)$'
 	# A constructor makes .init_array 8 bytes: amix_initS.o's null entry and
 	# the constructor's.
 	check "one constructor in .init_array" "$R" '\(INIT_ARRAYSZ\) +8 \(bytes\)'

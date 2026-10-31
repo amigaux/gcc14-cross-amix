@@ -881,12 +881,17 @@ against the library, `ld` pulls those symbols out of `libamixc99.a`,
   integer helpers (`__divdi3` and the rest) have no absolute relocations.
 
 **C++ static destructors run at exit, from `libamixc99`.** A library's static
-objects register with `__cxa_atexit` like the program's own, and one exit
-hook runs them all in reverse order of construction. `crtbeginS.o` would call
-`__cxa_finalize` from the library's `DT_FINI`. `libamixc99`'s version drops
-every other object's entries from the list, so `amix_initS.o` gives each
-library a hidden no-op in its place. `dlclose` therefore does not run them: a
-library with C++ static objects must stay loaded until exit.
+objects register with `__cxa_atexit` like the program's own, into the one list
+in the program. At exit one hook runs them all, newest first, before stdio's
+`_cleanup`. `crt1.o` registers `_cleanup` just before it runs the program's
+constructors, so the hook is registered by one of them, at priority 101. The
+first `__cxa_atexit` call would be too early when a library's `DT_INIT` makes
+it: the hook would run after the last flush. A library's `DT_FINI` calls
+`__cxa_finalize` with the library's own handle, through `crtbeginS.o`. That
+runs the library's entries and leaves everyone else's, so `dlclose` runs a
+library's destructors, and at exit the call finds them already done.
+`tools/test-compat-host.sh` checks which entries each call runs, and the exit
+order against a stand-in `_cleanup`.
 
 **Exceptions do not cross a library.** The unwinder is in `libgcc.a`, built
 with hidden symbols, so each program has a private copy. A shared library
