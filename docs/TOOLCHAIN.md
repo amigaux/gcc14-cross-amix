@@ -881,12 +881,12 @@ weak symbols at all. Its runtime linker treats an unresolved `STB_WEAK` symbol
 as 0 rather than failing (`do_reloc`, after the `_lookup` call).
 
 **The C and C++ runtimes stay in the program.** AMIX's own libraries have no
-`DT_NEEDED`, and a library built here has none either. `libc.so` at link time
+`DT_NEEDED`, and a library built here NEEDs no runtime either. `libc.so` at link time
 is an archive: `libc.so.1` plus static members built without PIC. What a
 library leaves undefined, the program supplies. When the program links
 against the library, `ld` pulls those symbols out of `libamixc99.a`,
 `libc.so` or `libstdc++.a` and exports them: `snprintf`, `__cxa_atexit`,
-`__gxx_personality_v0`. Four consequences:
+`__gxx_personality_v0`. Five consequences:
 
 - A program that uses a C++ library links with `g++`, even if the program
   itself is C. Otherwise `ld` stops with `undefined reference to
@@ -897,6 +897,15 @@ against the library, `ld` pulls those symbols out of `libamixc99.a`,
   `g++ -shared` adds `-lstdc++ -lm` and copies a static, non-PIC C++ runtime
   into the library, and `--warn-textrel` says so.
 - A library opened with `dlopen` gets only what the program happens to export.
+- Only a library named on the program's link line is filled in. A library
+  that another one NEEDs, which `ld` finds with `-rpath-link`, is read after
+  the archives have been searched, so what it leaves undefined stays
+  undefined: libXmu NEEDs libXt, and a client that names only `-lXmu` fails
+  with `undefined reference to gettimeofday`. The same holds for
+  `libamixc99` (`snprintf`, `__cxa_atexit`) and `libstdc++.a`, and
+  `--copy-dt-needed-entries` does not change it. For now a program names
+  every library in its closure, as X11's `FixupLibReferences` does.
+  `tools/test-shared-indirect.sh` reproduces it and fails until it is fixed.
 - `libgcc` is linked into each library. Its members are hidden, and its
   integer helpers (`__divdi3` and the rest) have no absolute relocations.
 
