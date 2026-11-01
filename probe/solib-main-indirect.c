@@ -10,6 +10,8 @@
  * program's start-up runs the deferred constructors the other way round.
  */
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 
 int solib_mid_clock(char *, int);
 int solib_mid_dep_first(void);
@@ -21,6 +23,11 @@ int main(void)
 	int dep_first = solib_mid_dep_first() == 1;
 	int ok = clock_ok && dep_first;
 
+	{
+		time_t s = (time_t)atol(buf);
+
+		printf("main: the machine's clock reads %s      (the clock check needs a date after 2020-01-01)\n", ctime(&s));
+	}
 	printf("main: constructor order: %s\n",
 	       dep_first ? "solib-dep before solib-mid" : "solib-mid before solib-dep");
 	printf("main: clock through two libraries=%s (%s) -> %s\n", buf,

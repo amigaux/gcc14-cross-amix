@@ -13,8 +13,11 @@
 #include <sys/time.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <syslog.h>
 
+/* AMIX's <syslog.h> declares neither. */
 extern int setlogmask(int);
+extern void openlog(const char *, int, int);
 
 long mid_lrand48(void);
 void mid_srand48(long);
@@ -65,6 +68,10 @@ int main(void)
 	v = lrand48();
 	report("drand48: the library seeds, the program draws", v == 483889296L, v, 483889296L);
 
+	/* openlog first: libc's setlogmask uses the state openlog allocates and
+	 * does not check for it, so before openlog it follows a null pointer --
+	 * a SIGSEGV on a kernel that does not map page zero. */
+	openlog("solib-main-interpose", 0, LOG_USER);
 	setlogmask(0x3f);
 	m = mid_logmask();
 	report("syslog: the program sets the mask, the library sees it", m == 0x3f, m, 0x3f);

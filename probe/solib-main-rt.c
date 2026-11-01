@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 long mid_now(void);
@@ -58,7 +59,12 @@ int main(void)
 	char *m;
 
 	t = mid_now();
-	sprintf(d, "%ld", t);
+	{
+		time_t s = (time_t)t;
+
+		printf("the machine's clock reads %s", ctime(&s));
+	}
+	sprintf(d, "%ld (needs the machine's date set after 2020-01-01)", t);
 	report("gettimeofday: a date after 2020", t > 1577836800L, d);
 
 	us = mid_select_sleep_us(200);

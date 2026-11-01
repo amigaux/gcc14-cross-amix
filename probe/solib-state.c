@@ -18,6 +18,9 @@
 
 extern int setlogmask(int);	/* not declared by AMIX's <syslog.h> */
 
+/* The syslog functions need openlog first (the program calls it): libc's
+ * setlogmask does not check for the state openlog allocates. */
+
 long st_lrand48(void)
 {
 	return lrand48();

@@ -66,7 +66,7 @@ check_not "no NEEDED: never libc.so.1, which is always there" "$R" '\(NEEDED\)'
 check_not "no text relocations" "$R" 'TEXTREL'
 check_not "no initialisation: no DT_INIT, DT_FINI or init arrays" "$R" \
 	'\((INIT|FINI|INIT_ARRAY|FINI_ARRAY|INIT_ARRAYSZ|FINI_ARRAYSZ)\)|\.ctors|\.dtors|\.init_array|\.fini_array'
-EXPECT="__cxa_atexit __cxa_finalize _sys_errlist _sys_nerr _sys_nsig _sys_siglist
+EXPECT="__cxa_atexit __cxa_finalize __wrap_dlopen _sys_errlist _sys_nerr _sys_nsig _sys_siglist
 amix_snprintf amix_usleep amix_vsnprintf ftruncate getitimer gettimeofday
 realpath select setitimer settimeofday snprintf strcasecmp strncasecmp
 strsignal sys_errlist sys_nerr truncate usleep vsnprintf"
@@ -112,6 +112,7 @@ lib libsolibram.so.1 probe/solib-ram.c
 "$CC" -O2 -o "$OUT/solib-main-interpose" probe/solib-main-interpose.c "$OUT/libsolibstatemid.so.1" \
 	-Wl,-rpath-link,"$OUT"
 "$CC" -O2 -o "$OUT/solib-dlopen" probe/solib-dlopen.c -ldl
+"$CC" -O2 -o "$OUT/nullread" probe/nullread.c
 "$CC" -O2 -o "$OUT/ram-plain" probe/solib-main-ram.c "$OUT/libsolibram.so.1"
 "$CC" -O2 -o "$OUT/ram-amixrt" probe/solib-main-ram.c "$OUT/libsolibramrt.so.1"
 pass "all built"
@@ -158,10 +159,18 @@ if needed "$P" | grep -q 'libsolib\|libamixrt'; then
 else
 	pass "the program NEEDs none of the libraries"
 fi
-if "$NM" -D --defined-only "$P" | awk '{print $3}' | grep -qx __amix_dso_init; then
-	fail "the program does not export __amix_dso_init, so the libraries run their own constructors"
+for s in __amix_dso_init __amix_dso_batch; do
+	if "$NM" -D --defined-only "$P" | awk '{print $3}' | grep -qx "$s"; then
+		pass "the program exports $s, so the libraries it opens find the runner"
+	else
+		fail "the program exports $s, so the libraries it opens find the runner"
+	fi
+done
+if "$NM" --defined-only "$P" | awk '{print $3}' | grep -qx __wrap_dlopen \
+   && ! "$NM" -u "$P" | awk '{print $NF}' | grep -qx dlopen; then
+	pass "its dlopen call goes to __wrap_dlopen, which orders the constructors"
 else
-	pass "the program does not export __amix_dso_init, so the libraries run their own constructors"
+	fail "its dlopen call goes to __wrap_dlopen, which orders the constructors"
 fi
 
 echo "== ram-plain and ram-amixrt"
@@ -176,9 +185,34 @@ else
 	fail "libsolibramrt NEEDs libamixrt.so.1 and nothing else"
 fi
 
+echo "== segments map right with 2 KiB, 4 KiB and 8 KiB pages"
+# AMIX's 68030 kernels map in 2 KiB pages, the 68060 port's in 4 KiB.  A
+# segment maps right on both when its file offset and address agree modulo
+# the largest page, and the writable segment starts on a later 2 KiB page
+# than the text ends on, so the two mappings never share a page.
+BAD=""
+for f in "$OUT"/*.so.1 "$OUT"/solib-main-rt "$OUT"/solib-main-interpose "$OUT"/solib-dlopen \
+	 "$OUT"/ram-plain "$OUT"/ram-amixrt "$OUT"/nullread; do
+	"$READELF" -lW "$f" | awk -v f="$(basename "$f")" '
+		$1 == "LOAD" {
+			off = strtonum($2); va = strtonum($3); fsz = strtonum($5); msz = strtonum($6)
+			if (off % 8192 != va % 8192) print f ": offset and address disagree modulo 8 KiB"
+			n++
+			if (n == 1) textend = va + fsz
+			else if (int(va / 2048) <= int((textend - 1) / 2048)) print f ": data starts on the text segment'"'"'s last 2 KiB page"
+		}' >> "$OUT/layout.log"
+done
+if [ -s "$OUT/layout.log" ]; then
+	fail "segment layout"
+	sed 's/^/        /' "$OUT/layout.log"
+else
+	pass "every file"
+fi
+rm -f "${OUT:?}/layout.log"
+
 echo "== no text relocations anywhere"
 TR=""
-for f in "$OUT"/*.so.1 "$OUT"/solib-main-rt "$OUT"/solib-main-interpose "$OUT"/solib-dlopen "$OUT"/ram-plain "$OUT"/ram-amixrt; do
+for f in "$OUT"/*.so.1 "$OUT"/solib-main-rt "$OUT"/solib-main-interpose "$OUT"/solib-dlopen "$OUT"/ram-plain "$OUT"/ram-amixrt "$OUT"/nullread; do
 	"$READELF" -d "$f" | grep -q TEXTREL && TR="$TR $(basename "$f")"
 done
 if [ -z "$TR" ]; then pass "none"; else fail "text relocations in:$TR"; fi
@@ -193,6 +227,8 @@ for p in solib-main-rt solib-main-interpose solib-dlopen; do
 	./$p
 	echo "exit status: $?"
 done
+echo "== nullread (a diagnostic of the kernel, not a test)"
+./nullread
 EOF
 
 cat > "$OUT/ram-measure.sh" <<'EOF'
