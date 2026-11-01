@@ -30,6 +30,9 @@
  * linker calls those for every object it loads, and has never heard of
  * DT_INIT_ARRAY either.  The same file built with -fPIC is amix_initS.o, which
  * the specs link into `gcc -shared` output instead -- see the second half.
+ * The program's copy also holds the runner that libraries hand their walks to,
+ * so that they run once libc is consistent -- see "Shared libraries'
+ * constructors" below.
  */
 
 #ifndef __PIC__
@@ -60,6 +63,69 @@ void __amix_run_fini_array(void)
 	for (p = __fini_array_end; p > __fini_array_start; ) {
 		p--;
 		if (*p != 0) (**p)();
+	}
+}
+
+/* Shared libraries' constructors, run once the program has started.
+ *
+ * AMIX's runtime linker calls each library's DT_INIT from _rtld, before it
+ * returns to the program's _start -- and before _rt_setup calls _rt_setaddr,
+ * which points 25 of libc.so.1's own references at the program's copies:
+ * __iob and the stdio buffers, errno, _environ, _fp_hw, __ctype, the timezone
+ * variables, and malloc, free, calloc and realloc.  Until then libc works on
+ * its own copies while the library already uses the program's.  A
+ * constructor's printf fills libc's private stdout, its fflush flushes the
+ * program's, and the text is never written -- measured on a 68030 and a
+ * 68060.  getenv finds nothing either: crt1.o has not set _environ yet.
+ *
+ * So a library's DT_INIT (amix_initS.o, below) does not run its .init_array:
+ * it hands it to __amix_dso_init, which the program's start-up runs from its
+ * .init_array at priority 100 -- after libc is consistent and _environ is
+ * set, after libstdc++'s standard streams (priority 90), before the
+ * program's own constructors.  A library loaded later, by dlopen, runs at
+ * once.
+ *
+ * Last in, first out.  The runtime linker loads objects breadth first and
+ * calls their DT_INIT in load order, so a library comes before the libraries
+ * it NEEDs: libXmu before libXt.  Running the list backwards initialises a
+ * library's dependencies before the library, as an ELF system does.
+ *
+ * It lives in this startfile, linked into every program, rather than in
+ * libamixc99: a library the program reaches only through another library's
+ * NEEDED must still find it, and ld searches archives before it reads such a
+ * library.  ld exports it whenever a shared library in the link refers to it,
+ * directly or not.  A program that uses no shared library of ours carries
+ * these few bytes and never calls them. */
+
+/* Priorities up to 100 are reserved for the implementation, which this is. */
+#pragma GCC diagnostic ignored "-Wprio-ctor-dtor"
+
+struct amix_dso_init {
+	struct amix_dso_init *next;
+	void (*run)(void);
+};
+
+static struct amix_dso_init *amix_dso_list;
+static int amix_dso_started;
+
+void __amix_dso_init(struct amix_dso_init *d)
+{
+	if (amix_dso_started) {
+		d->run();
+		return;
+	}
+	d->next = amix_dso_list;
+	amix_dso_list = d;
+}
+
+__attribute__((constructor(100))) static void amix_dso_run(void)
+{
+	struct amix_dso_init *d;
+
+	amix_dso_started = 1;
+	while ((d = amix_dso_list) != 0) {
+		amix_dso_list = d->next;
+		d->run();
 	}
 }
 
@@ -99,7 +165,14 @@ __asm__(
  * DT_INIT before libc.so.1 is consistent with the program -- stdio, errno,
  * _environ and malloc among others are rebound only afterwards -- so the
  * .init fragment hands the walk to __amix_dso_init in the program, which runs
- * it during the program's start-up.  compat/amix_dso.c has the details.
+ * it during the program's start-up; the first half of this file has the
+ * details.  The reference is weak.  A program linked by something else has no
+ * __amix_dso_init, and neither does one of ours that loads the library with
+ * dlopen without having linked any shared library of ours, because ld then
+ * had no reason to export it.  The runtime linker resolves the weak reference
+ * to 0, and the library runs its own array at once: right for dlopen, which
+ * comes after the program's start-up, and the best that can be done for a
+ * foreign program.
  *
  * Being an endfile still puts the .init fragment after crtbeginS.o's, the same
  * order as in an executable. */
@@ -124,14 +197,15 @@ struct amix_dso_init {
 	void (*run)(void);
 };
 
-/* In the program: libamixc99's amix_dso.o. */
-extern void __amix_dso_init(struct amix_dso_init *);
+/* In the program: amix_init.o, above. */
+extern void __amix_dso_init(struct amix_dso_init *) __attribute__((weak));
 
 static struct amix_dso_init amix_this_object = { 0, __amix_run_init_array };
 
 AMIX_HIDDEN void __amix_defer_init_array(void)
 {
-	__amix_dso_init(&amix_this_object);
+	if (__amix_dso_init != 0) __amix_dso_init(&amix_this_object);
+	else __amix_run_init_array();
 }
 
 AMIX_HIDDEN void __amix_run_fini_array(void)

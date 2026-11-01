@@ -4,9 +4,10 @@
  * -lsolibdep so that it records DT_NEEDED libsolibdep.so.1.  The program links
  * only this library.
  *
- * Its constructor reads libsolibdep's state.  The runtime linker initialises
- * objects in load order, which puts this library ahead of the one it depends
- * on, so the value it saw tells which order the constructors really ran in.
+ * Its constructor reads libsolibdep's state.  The runtime linker calls
+ * DT_INIT in load order, which puts this library ahead of the one it depends
+ * on; the program's start-up runs the deferred constructors last in, first
+ * out, so libsolibdep's should have run first.  The value seen tells.
  */
 #include <stdio.h>
 #include <unistd.h>
