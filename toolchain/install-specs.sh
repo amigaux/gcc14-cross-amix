@@ -169,11 +169,20 @@ replace("self_spec", "%{!mno-align-int:-malign-int} %{!mstrict-align:-mno-strict
 # -rpath-link lets ld find libamixrt.so.1 when a library in the link NEEDs it,
 # directly or through another library: ld looks for a NEEDED library only
 # along -rpath-link, -rpath and its default directories, never along -L.
+#
+# --wrap=dlopen sends dlopen to compat/amix_dlopen.c (libamixc99 for a
+# program, libamixrt for a library), which has the constructors of what it
+# loads run dependencies first.  It is set wherever the library that provides
+# it is linked.  A program exports the constructor runner from amix_init.o
+# always, not only when a library in its link refers to it: a library it
+# opens with dlopen must find it too.
 replace("link",
         "%{shared:-shared %{symbolic:-Bsymbolic} --hash-style=sysv -z norelro"
-        " --build-id=none --warn-textrel;"
+        " --build-id=none --warn-textrel %{!nostdlib:%{!nodefaultlibs:--wrap=dlopen}};"
         ":%{!nostdlib:--dynamic-linker /usr/lib/libc.so.1 -Ttext-segment=0x80000000"
-        " --hash-style=sysv -z norelro --build-id=none}}"
+        " --hash-style=sysv -z norelro --build-id=none"
+        " %{!nodefaultlibs:--wrap=dlopen}"
+        " --export-dynamic-symbol=__amix_dso_init --export-dynamic-symbol=__amix_dso_batch}}"
         " -rpath-link %:find-file(amixrt)")
 open(path, "w").write(text)
 PY

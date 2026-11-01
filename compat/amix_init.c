@@ -82,8 +82,8 @@ void __amix_run_fini_array(void)
  * it hands it to __amix_dso_init, which the program's start-up runs from its
  * .init_array at priority 100 -- after libc is consistent and _environ is
  * set, after libstdc++'s standard streams (priority 90), before the
- * program's own constructors.  A library loaded later, by dlopen, runs at
- * once.
+ * program's own constructors.  A library loaded later, by dlopen, runs when
+ * the dlopen returns (__amix_dso_batch, below).
  *
  * Last in, first out.  The runtime linker loads objects breadth first and
  * calls their DT_INIT in load order, so a library comes before the libraries
@@ -93,8 +93,9 @@ void __amix_run_fini_array(void)
  * It lives in this startfile, linked into every program, rather than in
  * libamixc99: a library the program reaches only through another library's
  * NEEDED must still find it, and ld searches archives before it reads such a
- * library.  ld exports it whenever a shared library in the link refers to it,
- * directly or not.  A program that uses no shared library of ours carries
+ * library.  The specs export __amix_dso_init and __amix_dso_batch from every
+ * program, so a library opened with dlopen by a program that links none of
+ * ours finds them too.  A program that uses no shared library of ours carries
  * these few bytes and never calls them. */
 
 /* Priorities up to 100 are reserved for the implementation, which this is. */
@@ -107,10 +108,24 @@ struct amix_dso_init {
 
 static struct amix_dso_init *amix_dso_list;
 static int amix_dso_started;
+static int amix_dso_batching;
+
+/* Run the walks registered since mark, newest first.  A walk may open more
+ * libraries; their walks are pushed above it and run, and taken off the list,
+ * before this loop sees the list again, so it only ever takes its own. */
+static void amix_dso_drain(struct amix_dso_init *mark)
+{
+	struct amix_dso_init *d;
+
+	while ((d = amix_dso_list) != 0 && d != mark) {
+		amix_dso_list = d->next;
+		d->run();
+	}
+}
 
 void __amix_dso_init(struct amix_dso_init *d)
 {
-	if (amix_dso_started) {
+	if (amix_dso_started && amix_dso_batching == 0) {
 		d->run();
 		return;
 	}
@@ -118,15 +133,27 @@ void __amix_dso_init(struct amix_dso_init *d)
 	amix_dso_list = d;
 }
 
+/* dlopen, as the specs rename it (--wrap=dlopen; amix_dlopen.c), brackets the
+ * runtime linker's _dlopen with this.  _dlopen calls the DT_INITs of what it
+ * loads in its own load order, the opened library before the libraries it
+ * NEEDs, so each walk is only queued while it runs, and the queue is run
+ * afterwards newest first: dependencies before the libraries that need them,
+ * as at start-up.  begin returns a mark for end; calls nest. */
+struct amix_dso_init *__amix_dso_batch(struct amix_dso_init *mark, int begin)
+{
+	if (begin) {
+		amix_dso_batching++;
+		return amix_dso_list;
+	}
+	amix_dso_batching--;
+	amix_dso_drain(mark);
+	return 0;
+}
+
 __attribute__((constructor(100))) static void amix_dso_run(void)
 {
-	struct amix_dso_init *d;
-
 	amix_dso_started = 1;
-	while ((d = amix_dso_list) != 0) {
-		amix_dso_list = d->next;
-		d->run();
-	}
+	amix_dso_drain(0);
 }
 
 /* The fragments themselves.  crti.o opens _init and _fini, crtn.o closes them,
@@ -167,12 +194,9 @@ __asm__(
  * .init fragment hands the walk to __amix_dso_init in the program, which runs
  * it during the program's start-up; the first half of this file has the
  * details.  The reference is weak.  A program linked by something else has no
- * __amix_dso_init, and neither does one of ours that loads the library with
- * dlopen without having linked any shared library of ours, because ld then
- * had no reason to export it.  The runtime linker resolves the weak reference
- * to 0, and the library runs its own array at once: right for dlopen, which
- * comes after the program's start-up, and the best that can be done for a
- * foreign program.
+ * __amix_dso_init; the runtime linker resolves the weak reference to 0, and
+ * the library runs its own array at once, which is the best that can be done
+ * there.  Every program built here exports it.
  *
  * Being an endfile still puts the .init fragment after crtbeginS.o's, the same
  * order as in an executable. */

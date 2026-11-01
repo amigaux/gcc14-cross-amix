@@ -62,7 +62,7 @@ echo "build-compat.sh: installed $TC_PREFIX/$TC_TARGET/lib/amix_initS.o"
 # so an object left in $OUT by an older build cannot slip into the archive.
 # amix_dso.o, the deferral runner, is no longer a member: it moved into
 # amix_init.o above.
-C99_MEMBERS="amix_compat amix_cxa amix_str"
+C99_MEMBERS="amix_compat amix_cxa amix_str amix_dlopen"
 for m in $C99_MEMBERS; do
 	$CC -O2 -fno-strict-aliasing $INC \
 		-U__linux__ -U__gnu_linux__ -Ulinux -D__amix__ -D__svr4__ \
@@ -91,7 +91,7 @@ fi
 # It needs libgcc.a (the 64-bit divide in the formatter), which a fresh
 # toolchain build has not made yet when it first runs this script;
 # build-cross.sh runs it again once libgcc is installed.
-RT_MEMBERS="amix_compat amix_cxa amix_str amixrt_time amixrt_select \
+RT_MEMBERS="amix_compat amix_cxa amix_str amix_dlopen amixrt_time amixrt_select \
 	amixrt_truncate amixrt_realpath amixrt_itimer"
 LIBGCC=$($CC -print-libgcc-file-name 2>/dev/null || true)
 if [ -z "$INC" ] && [ -f "$LIBGCC" ]; then
