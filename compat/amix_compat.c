@@ -129,12 +129,35 @@ static void render_ll(struct sink *s, unsigned long long uv, int negative,
 	if (leftalign) while (pad-- > 0) sink_put(s, " ", 1);
 }
 
+/* ------------------------------------------------- a double, as two words --
+ * The %e %f %g %a conversions only hand their double on to libc's sprintf;
+ * nothing here computes with it.  On m68k a double argument occupies two
+ * 32-bit stack slots, high word first, so it is read from the va_list as two
+ * unsigned longs and passed on as two unsigned longs: sprintf finds the same
+ * eight bytes in the same place.  Held as a double, it could go through an
+ * FP register (the -fPIC build did), and the fp2 save in amix_vsnprintf's
+ * prologue then ran on every call: an FPU-less 68LC040/68LC060 without the
+ * kernel's FPE trapped on any snprintf, even one with no floating-point
+ * conversion.  As words, this object names no FP register whatever the
+ * register allocator does.  Other machines (the host test) pass doubles in
+ * their own registers, so there it stays a double. */
+#if defined(__mc68000__)
+struct dblarg { unsigned long hi, lo; };
+#define DBLARG_GET(d, ap) ((d).hi = va_arg(ap, unsigned long), \
+                           (d).lo = va_arg(ap, unsigned long))
+#define DBLARG_PASS(d)    (d)->hi, (d)->lo
+#else
+struct dblarg { double v; };
+#define DBLARG_GET(d, ap) ((d).v = va_arg(ap, double))
+#define DBLARG_PASS(d)    (d)->v
+#endif
+
 /* ------------------------------------------------- one borrowed conversion --
  * Formats a single conversion with libc's own sprintf, into a buffer chosen
  * large enough that sprintf cannot overrun it. */
 static void borrow_conv(struct sink *s, const char *spec, size_t need,
                         int class_, long ival, unsigned long uval,
-                        double dval, const void *pval)
+                        const struct dblarg *dval, const void *pval)
 {
 	char stackbuf[AMIX_CONV_STACK];
 	char *buf = stackbuf;
@@ -147,7 +170,7 @@ static void borrow_conv(struct sink *s, const char *spec, size_t need,
 	switch (class_) {
 		case 0:  n = sprintf(buf, spec, ival); break;
 		case 1:  n = sprintf(buf, spec, uval); break;
-		case 2:  n = sprintf(buf, spec, dval); break;
+		case 2:  n = sprintf(buf, spec, DBLARG_PASS(dval)); break;
 		default: n = sprintf(buf, spec, pval); break;
 	}
 	if (n > 0) sink_put(s, buf, (size_t)n);
@@ -249,7 +272,7 @@ int amix_vsnprintf(char *str, size_t size, const char *fmt, va_list ap)
 					          leftalign, zeropad, plusflag, spaceflag, altflag);
 				} else {
 					long v = is_long ? va_arg(ap, long) : (long)va_arg(ap, int);
-					borrow_conv(&s, spec, need, 0, v, 0, 0.0, NULL);
+					borrow_conv(&s, spec, need, 0, v, 0, NULL, NULL);
 				}
 				break;
 			case 'u': case 'o': case 'x': case 'X':
@@ -261,12 +284,12 @@ int amix_vsnprintf(char *str, size_t size, const char *fmt, va_list ap)
 				} else {
 					unsigned long v = is_long ? va_arg(ap, unsigned long)
 					                          : (unsigned long)va_arg(ap, unsigned int);
-					borrow_conv(&s, spec, need, 1, 0, v, 0.0, NULL);
+					borrow_conv(&s, spec, need, 1, 0, v, NULL, NULL);
 				}
 				break;
 			case 'c': {
 				long v = (long)va_arg(ap, int);
-				borrow_conv(&s, spec, need, 0, v, 0, 0.0, NULL);
+				borrow_conv(&s, spec, need, 0, v, 0, NULL, NULL);
 				break;
 			}
 			case 's': {
@@ -276,21 +299,22 @@ int amix_vsnprintf(char *str, size_t size, const char *fmt, va_list ap)
 				vlen = strlen(v);
 				if (prec >= 0 && (size_t)prec < vlen) vlen = (size_t)prec;
 				need = (size_t)width > vlen ? (size_t)width : vlen;
-				borrow_conv(&s, spec, need + 8, 3, 0, 0, 0.0, v);
+				borrow_conv(&s, spec, need + 8, 3, 0, 0, NULL, v);
 				break;
 			}
 			case 'p': {
 				const void *v = va_arg(ap, const void *);
-				borrow_conv(&s, spec, need, 3, 0, 0, 0.0, v);
+				borrow_conv(&s, spec, need, 3, 0, 0, NULL, v);
 				break;
 			}
 			case 'f': case 'F': case 'e': case 'E': case 'g': case 'G':
 			case 'a': case 'A': {
-				double v = va_arg(ap, double);
+				struct dblarg v;
+				DBLARG_GET(v, ap);
 				/* %f of DBL_MAX is 309 digits before the point, plus the
 				 * precision after it. */
 				need = (size_t)(width + (prec < 0 ? 6 : prec) + 400);
-				borrow_conv(&s, spec, need, 2, 0, 0, v, NULL);
+				borrow_conv(&s, spec, need, 2, 0, 0, &v, NULL);
 				break;
 			}
 			case 'n': {

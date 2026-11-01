@@ -37,7 +37,8 @@ mkdir -p "$OUT"
 # No $AMIX_CPU here: that is the CPU the probes are built for, and this is
 # runtime, linked into every program whatever it was built for.  It follows
 # the compiler's default CPU, as libgcc does.  Built with -mcpu=68060, one
-# double in amix_vsnprintf became an fdmove, which a 68881/68882 does not have.
+# double in amix_vsnprintf became an fdmove, which a 68881/68882 does not have
+# (it now moves that double as two words and names no FP register at all).
 # amix_init.c is a STARTFILE, not a library member: it is named in the specs
 # and linked into every program, because nothing would ever reference it.
 $CC -O2 $INC -U__linux__ -U__gnu_linux__ -Ulinux -D__amix__ -D__svr4__ \
