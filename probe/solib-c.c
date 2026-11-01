@@ -11,8 +11,9 @@
  * Each function also exercises one thing a shared library has to get right:
  * initialised pointers (R_68K_RELATIVE), a 64-bit divide from libgcc (linked
  * into the object, hidden), and snprintf, which SVR4.0's libc does not have:
- * the library leaves it undefined and the executable supplies it from
- * libamixc99.
+ * the library NEEDs libamixrt.so.1 for it, and the runtime linker binds it to
+ * the program's own copy from libamixc99 when the program has one, as this
+ * test's programs do.
  */
 #include <stdio.h>
 #include <stdlib.h>

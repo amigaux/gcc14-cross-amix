@@ -62,6 +62,18 @@ produces a **working binary that behaves wrongly** rather than a build error:
   exported data cannot follow an executable's `R_68K_COPY` of it. A shared
   xterm crashes on libXt's class records. `build-cross.sh` rebuilds binutils
   when the patches change; `tools/test-pic-globals.sh` checks the result.
+- **A shared library takes what `libc.so.1` lacks from `libamixrt.so.1`.**
+  AMIX has `gettimeofday`, `select` and others only as non-PIC static members
+  of `usr/ccs/lib/libc.so`; `libamixrt` holds our own PIC versions plus
+  `libamixc99`, and `gcc -shared` links it `--as-needed`. It must define
+  nothing `libc.so.1` exports, have no `DT_INIT` and no `DT_NEEDED`, and keep
+  default visibility so a program's own copy wins. Add a function only when a
+  library needs it, with the rest of its libc group. `tools/test-amixrt.sh`
+  checks all of it; `docs/TOOLCHAIN.md` has the reasons.
+- **Every program carries the constructor runner, in `amix_init.o`.** It runs
+  shared libraries' constructors after libc is consistent, last in, first
+  out. It cannot move into a library: a library reached only through another
+  one must still find it.
 - **The vendor's 1991 X archives need repairing before they can be linked.**
   Every object in `libX11.a` has `sh_link` on its `.rela` section pointing at
   itself; modern `ld` silently drops those relocations and the program jumps to

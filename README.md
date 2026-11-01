@@ -182,7 +182,11 @@ fault.
 
 `tools/test-shared.sh` builds two shared libraries and two programs that use
 them, checks them with `readelf` on the host, and stages them for a run on the
-machine.
+machine. `tools/test-shared-indirect.sh`, `tools/test-pic-globals.sh` and
+`tools/test-amixrt.sh` do the same for a library reached through another
+library, for a library's pointers to its own data, and for `libamixrt.so.1`;
+[`docs/shared-library-tests.md`](docs/shared-library-tests.md) says how to run
+them on the machine and what to expect.
 
 ## Status
 
@@ -191,7 +195,9 @@ Working: C and C++ compilation and linking, `libgcc`, `libsupc++`, a **hosted**
 layer (`snprintf`, `vsnprintf`, `usleep`, `stdint.h`, C++ linkage wrappers for
 AMIX's C headers). `probe/stl.cpp` is the acceptance test and it passes.
 Shared libraries build with `gcc -shared -fPIC`, constructors included; see
-`docs/TOOLCHAIN.md` for what they may and may not do.
+`docs/TOOLCHAIN.md` for what they may and may not do. What they need and
+`libc.so.1` does not export comes from `libamixrt.so.1`, built with the
+toolchain; it has to be in `/usr/lib` on the machine that runs them.
 
 Known and unfixed: `fprintf` reaches AMIX's own formatter, which predates C99
 and mis-handles `ll` conversions -- the compat layer replaces `snprintf` and
@@ -204,11 +210,15 @@ and mis-handles `ll` conversions -- the compat layer replaces `snprintf` and
 
 Permissive rather than copyleft for one concrete reason: `compat/` is a
 *runtime* library. `libamixc99.a` and `amix_init.o` are linked into every
-binary this toolchain produces, so a copyleft licence here would reach into
+binary this toolchain produces, and `libamixrt.so.1` is loaded by every shared
+library that needs it, so a copyleft licence here would reach into
 other people's ports of other people's software. GCC solves the same problem
 with a separate runtime-library exception; MIT is the simpler way to the same
 place.
 
 GCC and binutils are downloaded from ftp.gnu.org at build time and carry their
 own licences; they are not redistributed here. Nothing from AMIX is
-redistributed here either — see **What you need**.
+redistributed here either — see **What you need**. One thing from it does go
+into a build product: `libamixrt.so.1` carries libc's error and signal message
+tables, which `tools/gen-amixrt-tables.py` copies from your sysroot when the
+library is built, so that they read exactly as `strerror` does.
