@@ -1,0 +1,24 @@
+--- a/gas/config/tc-m68k.c
++++ b/gas/config/tc-m68k.c
+@@ -1180,6 +1180,21 @@
+       return 0;
+ 
+     default:
++#ifdef OBJ_ELF
++      /* In position-independent code, keep a relocation against a global
++	 symbol of default visibility on that symbol.  The dynamic linker
++	 may bind it elsewhere -- to an executable's copy of the object
++	 (R_68K_COPY) or to another definition that preempts it -- and a
++	 relocation against the section can only ever point at this
++	 object's own copy.  m68k-elf leaves EXTERN_FORCE_RELOC off, so
++	 nothing else does this for it.  Local, hidden and protected
++	 symbols still resolve to the section.  */
++      if ((flag_want_pic || flag_keep_pcrel)
++	  && fixP->fx_addsy != NULL
++	  && S_IS_EXTERNAL (fixP->fx_addsy)
++	  && ELF_ST_VISIBILITY (S_GET_OTHER (fixP->fx_addsy)) == STV_DEFAULT)
++	return 0;
++#endif
+       return 1;
+     }
+ }

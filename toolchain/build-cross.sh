@@ -68,10 +68,25 @@ fetch() {  # $1 = url, $2 = filename
 }
 
 # ---------------------------------------------------------------- binutils ---
-if [ ! -x "$TC_PREFIX/bin/$TARGET-ld" ]; then
+# toolchain/patches/binutils-*.patch are applied to the release, in name order.
+# binutils-pic-global-relocs.patch: m68k-elf gas turned a relocation against a
+# global symbol defined in the same file into one against its section, even in
+# -fPIC code, so a shared library's pointer to its own exported object could
+# not be redirected to an executable's R_68K_COPY of it.  See docs/TOOLCHAIN.md,
+# "A library's pointers to its own exported data".
+#
+# Done means built with the current patches: a prefix whose binutils predate a
+# patch is rebuilt, as the compiler is for amix-abi.h below.
+BINUTILS_STAMP="$TC_PREFIX/.binutils-patches.sha256"
+BINUTILS_SUM=$(cat "$REPO"/toolchain/patches/binutils-*.patch | sha256sum | cut -d' ' -f1)
+if [ ! -x "$TC_PREFIX/bin/$TARGET-ld" ] || [ "$(cat "$BINUTILS_STAMP" 2>/dev/null)" != "$BINUTILS_SUM" ]; then
 	fetch "https://ftp.gnu.org/gnu/binutils/binutils-$BINUTILS_VER.tar.xz" "binutils-$BINUTILS_VER.tar.xz"
 	rm -rf "$WORK/binutils-$BINUTILS_VER" "$WORK/build-binutils"
 	tar -C "$WORK" -xf "$WORK/src/binutils-$BINUTILS_VER.tar.xz"
+	for p in "$REPO"/toolchain/patches/binutils-*.patch; do
+		echo "== applying $(basename "$p")"
+		patch -d "$WORK/binutils-$BINUTILS_VER" -p1 --forward < "$p"
+	done
 	mkdir -p "$WORK/build-binutils"
 	cd "$WORK/build-binutils"
 	"$WORK/binutils-$BINUTILS_VER/configure" \
@@ -84,6 +99,7 @@ if [ ! -x "$TC_PREFIX/bin/$TARGET-ld" ]; then
 	cd "$WORK"
 	# Reclaim the space before GCC needs it.
 	rm -rf "$WORK/build-binutils" "$WORK/binutils-$BINUTILS_VER"
+	echo "$BINUTILS_SUM" > "$BINUTILS_STAMP"
 	echo "== binutils installed"
 fi
 

@@ -56,6 +56,12 @@ produces a **working binary that behaves wrongly** rather than a build error:
   `-fpcc-struct-return`, the address goes in `%a1`". That was measured on
   Debian's `m68k-linux-gnu` compiler and is wrong for `m68k-elf` — a
   measurement belongs to the compiler it was taken with.
+- **binutils carries one patch: `toolchain/patches/`.** Unpatched m68k-elf
+  gas writes a `-fPIC` relocation against an exported symbol defined in the
+  same file as section+offset, so a shared library's pointer to its own
+  exported data cannot follow an executable's `R_68K_COPY` of it. A shared
+  xterm crashes on libXt's class records. `build-cross.sh` rebuilds binutils
+  when the patches change; `tools/test-pic-globals.sh` checks the result.
 - **The vendor's 1991 X archives need repairing before they can be linked.**
   Every object in `libX11.a` has `sh_link` on its `.rela` section pointing at
   itself; modern `ld` silently drops those relocations and the program jumps to

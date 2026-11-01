@@ -936,6 +936,26 @@ unequal. libXt's `_XtInherit` is the known case. X11's own fix also works
 here: link the compared function into every client from a small static
 archive, and the library's references then bind to the program's copy.
 
+**A library's pointers to its own exported data.** libXt has
+`coreWidgetClass = &widgetClassRec`. A client that subclasses a widget uses
+`widgetClassRec` directly, so `ld` gives the client a copy of it
+(`R_68K_COPY`), and the runtime linker, which looks in the program first, has
+to bind libXt's pointer to that copy too. It can only do that if the
+library's relocation names the symbol. Unpatched, m68k-elf gas writes it as
+section+offset even with `-fPIC`: m68k-elf is an embedded target to binutils,
+so `EXTERN_FORCE_RELOC` is off. `ld` then emits `R_68K_RELATIVE`, the pointer
+keeps pointing at libXt's own copy, and `XtIsWidget` fails on the client's
+class chain: a shared xterm crashed in `VTInitialize`. Every class record a
+client subclasses is hit this way, in Motif and CDE as much as in Xt.
+`toolchain/patches/binutils-pic-global-relocs.patch` makes gas keep a
+relocation against a global symbol of default visibility on that symbol when
+it assembles PIC code. gcc passes `--pcrel` to gas for `-fpic` and `-fPIC`,
+not `-k`, so the patch tests either. Local, hidden and protected symbols still
+become section+offset, and an object assembled without either flag is
+byte-identical to before. Pointers to functions keep their symbol too, but
+that does not fix function-address equality: see the paragraph above.
+`tools/test-pic-globals.sh` checks the object, the library and the program.
+
 `tools/test-shared.sh` builds a C library with a constructor and a destructor
 (`probe/solib-c.c`) and a C++ library with a static object
 (`probe/solib-cxx.cpp`). It links two programs against them and checks the
