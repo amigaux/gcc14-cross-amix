@@ -34,8 +34,11 @@ static int amix_cxa_hooked;
 
 /* Address of this translation unit, for the ABI's dso argument. Normally
  * supplied by crtbegin; defined weakly here so a toolchain that does provide
- * one wins. */
+ * one wins.  Not in libamixrt.so, the PIC build: each shared object has its
+ * own, hidden, from crtbeginS.o. */
+#ifndef __PIC__
 void *__dso_handle __attribute__((weak)) = &__dso_handle;
+#endif
 
 /* Run and remove the entries registered for one object, newest first, or
  * every entry when dso is 0 -- the exit hook below, or a caller that wants
@@ -74,11 +77,19 @@ static void amix_cxa_run_all(void)
  * runtime linker runs libraries' DT_INIT before the program starts, and the
  * hook would then run after _cleanup.  __cxa_atexit still registers one if
  * this has not run yet, so destructors run even in a program started some
- * other way; the second registration finds the list empty. */
+ * other way; the second registration finds the list empty.
+ *
+ * libamixrt.so, the PIC build, has no constructor: the library initialises
+ * nothing of its own.  Its copy is used only when the program has none, and
+ * then the first __cxa_atexit call comes from a library's constructor, which
+ * the program's start-up runs after crt1.o has registered _cleanup -- so
+ * registering the hook there is late enough. */
+#ifndef __PIC__
 __attribute__((constructor(101))) static void amix_cxa_hook(void)
 {
 	if (atexit(amix_cxa_run_all) == 0) amix_cxa_hooked = 1;
 }
+#endif
 
 int __cxa_atexit(amix_cxa_func func, void *arg, void *dso)
 {

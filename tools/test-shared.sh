@@ -33,8 +33,13 @@ CC="$TC_PREFIX/bin/$TC_TARGET-gcc"
 CXX="$TC_PREFIX/bin/$TC_TARGET-g++"
 READELF="$TC_PREFIX/bin/$TC_TARGET-readelf"
 OUT=build/test-shared
-rm -rf "$OUT"
+rm -rf "${OUT:?}"
 mkdir -p "$OUT"
+# libamixrt.so.1, which the libraries NEED for snprintf and __cxa_atexit, is
+# staged with them, so the run on AMIX finds it by LD_LIBRARY_PATH.
+RTDIR=$("$CC" -print-file-name=amixrt)
+[ -f "$RTDIR/libamixrt.so.1" ] || { echo "test-shared.sh: no libamixrt.so.1 in $RTDIR -- run tools/build-compat.sh" >&2; exit 1; }
+cp "$RTDIR/libamixrt.so.1" "$OUT/"
 
 FAILED=0
 pass() { echo "  ok    $1"; }
@@ -64,7 +69,13 @@ for lib in libsolibc.so.1 libsolibcxx.so.1; do
 	check "DT_INIT, which AMIX's runtime linker calls" "$R" '\(INIT\) '
 	check "DT_FINI, which it calls at exit" "$R" '\(FINI\) '
 	check_not "no text relocations" "$R" 'TEXTREL'
-	check_not "no NEEDED, as AMIX's own libraries have none" "$R" '\(NEEDED\)'
+	# Both use something libc.so.1 lacks: snprintf, and __cxa_atexit.
+	check "NEEDED libamixrt.so.1, for what libc.so.1 lacks" "$R" '\(NEEDED\) +Shared library: \[libamixrt\.so\.1\]'
+	if grep -E '\(NEEDED\)' "$R" | grep -qv '\[libamixrt\.so\.1\]'; then
+		fail "no other NEEDED, and never libc.so.1"
+	else
+		pass "no other NEEDED, and never libc.so.1"
+	fi
 	check_not "the startup code exports nothing" "$R" \
 		' [0-9]+ (__amix_[a-z_]+|__cxa_finalize|__dso_handle|frame_dummy|__divdi3)$'
 	# A constructor makes .init_array 8 bytes: amix_initS.o's null entry and
@@ -87,7 +98,9 @@ for prog in solib-main solib-main-cxx; do
 	check "an executable (ET_EXEC)" "$R" 'Type: +EXEC'
 	check "interpreter /usr/lib/libc.so.1" "$R" 'Requesting program interpreter: /usr/lib/libc.so.1'
 	check "NEEDED libsolibcxx.so.1" "$R" '\(NEEDED\) +Shared library: \[libsolibcxx.so.1\]'
-	LIBS=$(sed -nE 's/.*\(NEEDED\) +Shared library: \[(libsolib[a-z]*\.so\.1)\]/\1/p' "$R")
+	check_not "the program does not NEED libamixrt.so.1: it links its own copies" "$R" \
+		'\(NEEDED\) +Shared library: \[libamixrt\.so\.1\]'
+	LIBS="$(sed -nE 's/.*\(NEEDED\) +Shared library: \[(libsolib[a-z]*\.so\.1)\]/\1/p' "$R") libamixrt.so.1"
 	DEFS="$OUT/$prog.defs"
 	{ "$NM" -D --defined-only "$OUT/$prog"; for l in $LIBS; do "$NM" -D --defined-only "$OUT/$l"; done; } \
 		| awk '{print $3}' | cat - "$LIBC_SYMS" | sort -u > "$DEFS"

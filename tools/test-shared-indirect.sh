@@ -9,23 +9,26 @@
 # alone.
 #
 # libsolibdep calls gettimeofday, which AMIX has only as a static member of
-# usr/ccs/lib/libc.so, and snprintf, from libamixc99.a.  A library built with
-# `gcc -shared` leaves both to the program's link.  GNU ld fills a library's
-# undefined references from archives only for libraries named on the command
-# line: a library it loads because another one NEEDs it is read after the
-# archives have been searched.  So the link fails with "undefined reference to
-# gettimeofday" and "to snprintf".  Naming -lsolibdep as well makes it link;
-# that is checked too, as the control.  --copy-dt-needed-entries does not help.
+# usr/ccs/lib/libc.so, and snprintf, from libamixc99.a.  GNU ld fills a
+# library's undefined references from archives only for libraries named on the
+# command line: a library it loads because another one NEEDs it is read after
+# the archives have been searched.  So the libraries take both from
+# libamixrt.so.1 instead, which `gcc -shared` records as NEEDED when a library
+# uses it, and which the program's link finds with -rpath-link.  Checked: the
+# program links, everything the closure leaves undefined is defined at run
+# time, and the program itself does not NEED libamixrt.so.1.  Naming
+# -lsolibdep as well is checked too, as the control.
 #
-# Nothing runs on the host.  When the link succeeds, the result is staged in
-# build/test-shared-indirect/ with run-shared-indirect.sh, for a run on AMIX:
+# Nothing runs on the host.  The result is staged in build/test-shared-indirect/
+# with libamixrt.so.1 and run-shared-indirect.sh, for a run on AMIX:
 #
 #   copy build/test-shared-indirect/ to the machine, then there:
 #   sh run-shared-indirect.sh
 #
-# Expected there: both constructors' "(write)" and "(stdio)" lines before
-# main's, a constructor-order line, the clock line ending in PASS, and
-# "exit status: 0".
+# Expected there: solib-dep's "(write)" and "(stdio)" lines, then solib-mid's
+# with "solib-dep ready=1" -- the library a library NEEDs is initialised
+# first -- then "constructor order: solib-dep before solib-mid", the clock
+# line ending in PASS, and "exit status: 0".
 set -e
 cd "$(dirname "$0")/.."
 # sort and comm have to agree on the order.
@@ -37,8 +40,11 @@ CC="$TC_PREFIX/bin/$TC_TARGET-gcc"
 READELF="$TC_PREFIX/bin/$TC_TARGET-readelf"
 NM="$TC_PREFIX/bin/$TC_TARGET-nm"
 OUT=build/test-shared-indirect
-rm -rf "$OUT"
+rm -rf "${OUT:?}"
 mkdir -p "$OUT"
+RTDIR=$("$CC" -print-file-name=amixrt)
+[ -f "$RTDIR/libamixrt.so.1" ] || { echo "test-shared-indirect.sh: no libamixrt.so.1 in $RTDIR -- run tools/build-compat.sh" >&2; exit 1; }
+cp "$RTDIR/libamixrt.so.1" "$OUT/"
 
 FAILED=0
 pass() { echo "  ok    $1"; }
@@ -70,6 +76,16 @@ if "$CC" -O2 -o "$PROG" probe/solib-main-indirect.c "$OUT/libsolibmid.so.1" \
 	-Wl,-rpath-link,"$OUT" 2> "$OUT/link.log"; then
 	pass "links"
 	LINKED=1
+	if "$READELF" -d "$PROG" | grep -q 'libamixrt\.so\.1'; then
+		fail "the program does not NEED libamixrt.so.1"
+	else
+		pass "the program does not NEED libamixrt.so.1"
+	fi
+	if "$READELF" -d "$OUT/libsolibdep.so.1" | grep -qE '\(NEEDED\) +Shared library: \[libamixrt\.so\.1\]'; then
+		pass "libsolibdep NEEDs libamixrt.so.1"
+	else
+		fail "libsolibdep NEEDs libamixrt.so.1"
+	fi
 else
 	fail "links"
 	sed -n 's/.*: \(undefined reference to .*\)/        \1/p' "$OUT/link.log"

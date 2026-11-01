@@ -80,16 +80,28 @@ replace("endfile",
 # usleep, __cxa_atexit.  Named before -lc because it calls into libc and not
 # the other way round.
 #
-# A shared object links neither, as AMIX's own libsocket.so and libX11.so do
-# not: they have no DT_NEEDED at all.  libc.so here is an archive -- the shared
-# libc.so.1 plus static members built without PIC -- and libc.so.1 is the
-# runtime linker, so it is always loaded anyway.  What the object leaves
-# undefined, the executable supplies: ld pulls a shared library's undefined
-# symbols out of -lamixc99 and -lc into the program and exports them.  libgcc
-# is still linked: its members are hidden, and the integer helpers are
-# position-independent.
+# A shared object links neither.  libc.so here is an archive -- the shared
+# libc.so.1 plus static members built without PIC, which cannot go into a
+# shared object -- and libc.so.1 is the runtime linker, so it is always loaded
+# anyway; a library must not NEED it, because the runtime linker knows it only
+# as /usr/lib/libc.so.1.  What a library needs that libc.so.1 does not export
+# comes from libamixrt.so.1 instead: libamixc99 built position-independent,
+# plus our own gettimeofday, select and the rest of the functions AMIX has only
+# as static members.  --as-needed records DT_NEEDED libamixrt.so.1 only in a
+# library that uses something from it.  It lives in a directory of its own,
+# which %:find-file locates next to the compiler, so the specs stay
+# relocatable.  libgcc is still linked: its members are hidden, and the
+# integer helpers are position-independent.
+#
+# A program still links -lamixc99 -lc statically for what it calls itself and
+# for what the libraries named on its command line need, and those copies win
+# at run time: ld exports them, and the runtime linker looks in the program
+# first.  libamixrt.so.1 serves the libraries the program reaches only through
+# another library's NEEDED, and those loaded with dlopen.
 replace("lib",
-        "%{!nostdlib:%{!nodefaultlibs:-L%R/usr/ccs/lib -L%R/usr/lib %{!shared:-lamixc99 -lc}}}")
+        "%{!nostdlib:%{!nodefaultlibs:-L%R/usr/ccs/lib -L%R/usr/lib"
+        " %{shared:-L%:find-file(amixrt) --as-needed -lamixrt --no-as-needed;"
+        ":-lamixc99 -lc}}}")
 # The platform identifies itself.  A generic m68k-elf compiler defines nothing
 # that says "AMIX", so portable code has no way to select a path for this
 # target -- and code that IS written for it, like a crash handler that reads
@@ -153,11 +165,16 @@ replace("self_spec", "%{!mno-align-int:-malign-int} %{!mstrict-align:-mno-strict
 # Name it with -Wl,-soname,libfoo.so.1.  --warn-textrel says when an object
 # built without -fPIC went in: AMIX loads such a library, but every process
 # then gets its own copy of the text.
+#
+# -rpath-link lets ld find libamixrt.so.1 when a library in the link NEEDs it,
+# directly or through another library: ld looks for a NEEDED library only
+# along -rpath-link, -rpath and its default directories, never along -L.
 replace("link",
         "%{shared:-shared %{symbolic:-Bsymbolic} --hash-style=sysv -z norelro"
         " --build-id=none --warn-textrel;"
         ":%{!nostdlib:--dynamic-linker /usr/lib/libc.so.1 -Ttext-segment=0x80000000"
-        " --hash-style=sysv -z norelro --build-id=none}}")
+        " --hash-style=sysv -z norelro --build-id=none}}"
+        " -rpath-link %:find-file(amixrt)")
 open(path, "w").write(text)
 PY
 

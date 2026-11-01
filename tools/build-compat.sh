@@ -58,19 +58,71 @@ $CC -O2 -fPIC $INC -U__linux__ -U__gnu_linux__ -Ulinux -D__amix__ -D__svr4__ \
 cp "$OUT/pic/amix_initS.o" "$TC_PREFIX/$TC_TARGET/lib/amix_initS.o"
 echo "build-compat.sh: installed $TC_PREFIX/$TC_TARGET/lib/amix_initS.o"
 
-for src in compat/*.c; do
-	[ "$src" = "compat/amix_init.c" ] && continue
-	obj="$OUT/$(basename "${src%.c}").o"
+# libamixc99.a: what the program links statically.  Named member by member,
+# so an object left in $OUT by an older build cannot slip into the archive.
+# amix_dso.o, the deferral runner, is no longer a member: it moved into
+# amix_init.o above.
+C99_MEMBERS="amix_compat amix_cxa amix_str"
+for m in $C99_MEMBERS; do
 	$CC -O2 -fno-strict-aliasing $INC \
 		-U__linux__ -U__gnu_linux__ -Ulinux -D__amix__ -D__svr4__ \
-		-c -o "$obj" "$src"
+		-c -o "$OUT/$m.o" "compat/$m.c"
 done
-rm -f "$OUT/libamixc99.a"
-$AR rcs "$OUT/libamixc99.a" "$OUT"/*.o
+rm -f "${OUT:?}/libamixc99.a"
+$AR rcs "$OUT/libamixc99.a" $(for m in $C99_MEMBERS; do echo "$OUT/$m.o"; done)
 
 if [ -d "$TC_PREFIX/$TC_TARGET/lib" ]; then
 	cp "$OUT/libamixc99.a" "$TC_PREFIX/$TC_TARGET/lib/libamixc99.a"
 	echo "build-compat.sh: installed $TC_PREFIX/$TC_TARGET/lib/libamixc99.a"
 else
 	echo "build-compat.sh: $OUT/libamixc99.a (toolchain not built yet, not installed)"
+fi
+
+# libamixrt.so.1: the same C99 pieces, built position-independent, plus our
+# own implementations of the libc functions AMIX has only as static,
+# non-PIC members of usr/ccs/lib/libc.so.  Every shared library built with
+# `gcc -shared` NEEDs it when it uses one of them (the specs link it
+# --as-needed), so a library reached only through another library's NEEDED,
+# or loaded by dlopen, still finds them.  docs/TOOLCHAIN.md, "libamixrt.so:
+# the runtime a shared library needs", has the rules; in short it defines
+# nothing libc.so.1 exports, has no constructors and no DT_INIT, NEEDs
+# nothing, and must have no text relocations.
+#
+# It needs libgcc.a (the 64-bit divide in the formatter), which a fresh
+# toolchain build has not made yet when it first runs this script;
+# build-cross.sh runs it again once libgcc is installed.
+RT_MEMBERS="amix_compat amix_cxa amix_str amixrt_time amixrt_select \
+	amixrt_truncate amixrt_realpath amixrt_itimer"
+LIBGCC=$($CC -print-libgcc-file-name 2>/dev/null || true)
+if [ -z "$INC" ] && [ -f "$LIBGCC" ]; then
+	RT="$OUT/pic/rt"
+	mkdir -p "$RT"
+	python3 tools/gen-amixrt-tables.py "$AMIX_SYSROOT/usr/ccs/lib/libc.so" > "$RT/amixrt_tables.c"
+	RT_OBJS=""
+	for m in $RT_MEMBERS; do
+		$CC -O2 -fPIC -fno-strict-aliasing \
+			-U__linux__ -U__gnu_linux__ -Ulinux -D__amix__ -D__svr4__ \
+			-c -o "$RT/$m.o" "compat/$m.c"
+		RT_OBJS="$RT_OBJS $RT/$m.o"
+	done
+	$CC -O2 -fPIC -c -o "$RT/amixrt_tables.o" "$RT/amixrt_tables.c"
+	$CC -c -o "$RT/amixrt_syscall.o" compat/amixrt_syscall.S
+	# -nostartfiles: no crti/crtn, so no DT_INIT or DT_FINI, and nothing of
+	# crtbeginS.o; the library initialises nothing.  -nodefaultlibs: not
+	# linked against itself, and not against libc, which it must not NEED
+	# (the runtime linker knows libc.so.1 only as /usr/lib/libc.so.1).
+	# -z text turns a text relocation into an error.
+	rm -f "${RT:?}/libamixrt.so.1"
+	$CC -shared -nostartfiles -nodefaultlibs -Wl,-soname,libamixrt.so.1 \
+		-Wl,-z,text -o "$RT/libamixrt.so.1" \
+		$RT_OBJS "$RT/amixrt_tables.o" "$RT/amixrt_syscall.o" -lgcc
+	# Installed in a directory of its own, which the specs find with
+	# %:find-file(amixrt): -L for `gcc -shared`, -rpath-link for every link.
+	RTDIR="$TC_PREFIX/$TC_TARGET/lib/amixrt"
+	mkdir -p "$RTDIR"
+	cp "$RT/libamixrt.so.1" "$RTDIR/libamixrt.so.1"
+	ln -sf libamixrt.so.1 "$RTDIR/libamixrt.so"
+	echo "build-compat.sh: installed $RTDIR/libamixrt.so.1"
+else
+	echo "build-compat.sh: libamixrt.so.1 not built (no libgcc.a yet, or not this toolchain's compiler)"
 fi

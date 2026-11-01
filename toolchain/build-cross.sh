@@ -240,7 +240,11 @@ if [ ! -f "$GCCLIB/crtbeginS.o" ] || [ ! -f "$GCCLIB/crtendS.o" ]; then
 	make -C "$LIBGCC_BUILD" MAKEINFO=true CRTSTUFF_T_CFLAGS_S=-fPIC crtbeginS.o crtendS.o
 	cp "$LIBGCC_BUILD/crtbeginS.o" "$LIBGCC_BUILD/crtendS.o" "$GCCLIB/"
 fi
-[ -f "$TC_PREFIX/$TARGET/lib/amix_initS.o" ] || "$REPO/tools/build-compat.sh"
+# libamixrt.so.1 links libgcc.a, so on a fresh build tools/build-compat.sh
+# above skipped it; this is the first point where it can be made.  The specs
+# name it for every `gcc -shared`, and nothing before here links one.
+[ -f "$TC_PREFIX/$TARGET/lib/amix_initS.o" ] && [ -f "$TC_PREFIX/$TARGET/lib/amixrt/libamixrt.so.1" ] \
+	|| "$REPO/tools/build-compat.sh"
 "$REPO/toolchain/install-specs.sh" >/dev/null
 
 # The runtime is linked into every program, so it has to run on every CPU in
@@ -249,7 +253,7 @@ fi
 # prefix built by an earlier version of this script, --with-cpu=68060, passes
 # the test above (libstdc++.a present, amix-abi.h unchanged) and would
 # otherwise be kept.
-RUNTIME=("$GCCLIB"/libgcc.a "$GCCLIB"/crt*.o "$TC_PREFIX/$TARGET/lib"/lib{stdc++,stdc++exp,supc++,amixc99}.a "$TC_PREFIX/$TARGET/lib"/amix_init{,S}.o)
+RUNTIME=("$GCCLIB"/libgcc.a "$GCCLIB"/crt*.o "$TC_PREFIX/$TARGET/lib"/lib{stdc++,stdc++exp,supc++,amixc99}.a "$TC_PREFIX/$TARGET/lib"/amix_init{,S}.o "$TC_PREFIX/$TARGET/lib/amixrt/libamixrt.so.1")
 python3 "$REPO/tools/check-68060-safe.py" --68881 "${RUNTIME[@]}" || {
 	echo "!! the runtime above is not safe on every 68020..68060 + 68881 machine." >&2
 	echo "!! If it was built by an older version of this script, rebuild it:" >&2
