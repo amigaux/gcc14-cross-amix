@@ -190,12 +190,20 @@ echo "== segments map right with 2 KiB, 4 KiB and 8 KiB pages"
 # segment maps right on both when its file offset and address agree modulo
 # the largest page, and the writable segment starts on a later 2 KiB page
 # than the text ends on, so the two mappings never share a page.
-BAD=""
 for f in "$OUT"/*.so.1 "$OUT"/solib-main-rt "$OUT"/solib-main-interpose "$OUT"/solib-dlopen \
 	 "$OUT"/ram-plain "$OUT"/ram-amixrt "$OUT"/nullread; do
+	# POSIX awk: no strtonum, so the hex is read here.
 	"$READELF" -lW "$f" | awk -v f="$(basename "$f")" '
+		function hex(s,   v, i) {
+			s = tolower(s)
+			sub(/^0x/, "", s)
+			v = 0
+			for (i = 1; i <= length(s); i++)
+				v = v * 16 + index("0123456789abcdef", substr(s, i, 1)) - 1
+			return v
+		}
 		$1 == "LOAD" {
-			off = strtonum($2); va = strtonum($3); fsz = strtonum($5); msz = strtonum($6)
+			off = hex($2); va = hex($3); fsz = hex($5)
 			if (off % 8192 != va % 8192) print f ": offset and address disagree modulo 8 KiB"
 			n++
 			if (n == 1) textend = va + fsz
