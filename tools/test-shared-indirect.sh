@@ -68,7 +68,7 @@ else
 	fail "links"
 	sed 's/^/        /' "$OUT/control.log"
 fi
-rm -f "$OUT/control" "$OUT/control.log"
+rm -f "${OUT:?}/control" "${OUT:?}/control.log"
 
 echo "== the program names only libsolibmid"
 PROG="$OUT/solib-main-indirect"
@@ -91,7 +91,7 @@ else
 	sed -n 's/.*: \(undefined reference to .*\)/        \1/p' "$OUT/link.log"
 	LINKED=0
 fi
-rm -f "$OUT/link.log"
+rm -f "${OUT:?}/link.log"
 
 if [ "$LINKED" = 1 ]; then
 	# Everything the two libraries leave undefined has to be found at run
@@ -117,7 +117,7 @@ if [ "$LINKED" = 1 ]; then
 	} | awk '$2 ~ /^[A-Z]$/ {print $3}' | sort -u > "$DEFS"
 	MISSING=$(for l in $CLOSURE; do "$NM" -D --undefined-only "$OUT/$l"; done \
 		| awk '$1 == "U" {print $2}' | sort -u | comm -23 - "$DEFS")
-	rm -f "$DEFS"
+	rm -f "${DEFS:?}"
 	if [ -z "$MISSING" ]; then
 		pass "every undefined symbol of$CLOSURE is defined at run time"
 	else

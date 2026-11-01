@@ -178,7 +178,7 @@ replace("link",
 open(path, "w").write(text)
 PY
 
-mv "$SPECS.new" "$SPECS"
+mv "${SPECS:?}.new" "${SPECS:?}"
 echo "install-specs.sh: $SPECS"
 # The verification needs crtbegin.o/crtend.o, which libgcc provides.  During a
 # fresh toolchain build this script runs BEFORE libgcc exists -- the specs have
@@ -186,7 +186,7 @@ echo "install-specs.sh: $SPECS"
 # is expected then, not a failure.
 if [ -f "$LIBDIR/crtbegin.o" ]; then
 	echo "== a default link should now work and produce an AMIX executable"
-	TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+	TMP=$(mktemp -d); trap 'rm -rf "${TMP:?}"' EXIT
 	printf '#include <stdio.h>\nint main(void){printf("default specs work\\n");return 0;}\n' > "$TMP/t.c"
 	"$CC" $AMIX_CPU -O2 -o "$TMP/t" "$TMP/t.c"
 	file "$TMP/t"

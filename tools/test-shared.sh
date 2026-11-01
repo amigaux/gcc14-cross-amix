@@ -57,7 +57,7 @@ echo "== building"
 "$CC" -O2 -c -o "$OUT/solib-main.o" probe/solib-main.c
 "$CXX" -O2 -o "$OUT/solib-main" "$OUT/solib-main.o" "$OUT/libsolibc.so.1" "$OUT/libsolibcxx.so.1"
 "$CXX" -O2 -o "$OUT/solib-main-cxx" probe/solib-main-cxx.cpp "$OUT/libsolibcxx.so.1"
-rm -f "$OUT/solib-main.o"
+rm -f "${OUT:?}/solib-main.o"
 
 for lib in libsolibc.so.1 libsolibcxx.so.1; do
 	echo "== $lib"
@@ -81,7 +81,7 @@ for lib in libsolibc.so.1 libsolibcxx.so.1; do
 	# A constructor makes .init_array 8 bytes: amix_initS.o's null entry and
 	# the constructor's.
 	check "one constructor in .init_array" "$R" '\(INIT_ARRAYSZ\) +8 \(bytes\)'
-	rm -f "$R"
+	rm -f "${R:?}"
 done
 
 # What the runtime linker will search for a library's undefined symbols: the
@@ -111,9 +111,9 @@ for prog in solib-main solib-main-cxx; do
 	else
 		fail "left undefined at run time: $(echo $MISSING)"
 	fi
-	rm -f "$R" "$DEFS"
+	rm -f "${R:?}" "${DEFS:?}"
 done
-rm -f "$LIBC_SYMS"
+rm -f "${LIBC_SYMS:?}"
 
 echo "== an object built without -fPIC is reported"
 if "$CC" -O2 -shared -o "$OUT/nopic.so" probe/solib-c.c 2>&1 | grep -q TEXTREL; then
@@ -121,7 +121,7 @@ if "$CC" -O2 -shared -o "$OUT/nopic.so" probe/solib-c.c 2>&1 | grep -q TEXTREL; 
 else
 	fail "ld warns about the text relocations"
 fi
-rm -f "$OUT/nopic.so"
+rm -f "${OUT:?}/nopic.so"
 
 cat > "$OUT/run-shared.sh" <<'EOF'
 # run-shared.sh -- run on AMIX, in the directory test-shared.sh staged.

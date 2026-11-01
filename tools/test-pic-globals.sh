@@ -108,7 +108,7 @@ if [ -n "$copy_at" ] && [ "$copy_at" = "$def_at" ]; then
 else
 	fail "the program exports its copy (copy at ${copy_at:-?}, exported at ${def_at:-?})"
 fi
-rm -f "$R" "$OUT/lib.dyn"
+rm -f "${R:?}" "${OUT:?}/lib.dyn"
 
 cat > "$OUT/run-pic-globals.sh" <<'EOF'
 # run-pic-globals.sh -- run on AMIX, in the directory test-pic-globals.sh

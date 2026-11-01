@@ -64,7 +64,7 @@ fetch() {  # $1 = url, $2 = filename
 	[ -f "$WORK/src/$2" ] && return 0
 	echo "== fetching $2"
 	curl -fL --retry 3 -o "$WORK/src/$2.part" "$1"
-	mv "$WORK/src/$2.part" "$WORK/src/$2"
+	mv "${WORK:?}/src/$2.part" "${WORK:?}/src/$2"
 }
 
 # ---------------------------------------------------------------- binutils ---
@@ -81,7 +81,7 @@ BINUTILS_STAMP="$TC_PREFIX/.binutils-patches.sha256"
 BINUTILS_SUM=$(cat "$REPO"/toolchain/patches/binutils-*.patch | sha256sum | cut -d' ' -f1)
 if [ ! -x "$TC_PREFIX/bin/$TARGET-ld" ] || [ "$(cat "$BINUTILS_STAMP" 2>/dev/null)" != "$BINUTILS_SUM" ]; then
 	fetch "https://ftp.gnu.org/gnu/binutils/binutils-$BINUTILS_VER.tar.xz" "binutils-$BINUTILS_VER.tar.xz"
-	rm -rf "$WORK/binutils-$BINUTILS_VER" "$WORK/build-binutils"
+	rm -rf "${WORK:?}/binutils-${BINUTILS_VER:?}" "${WORK:?}/build-binutils"
 	tar -C "$WORK" -xf "$WORK/src/binutils-$BINUTILS_VER.tar.xz"
 	for p in "$REPO"/toolchain/patches/binutils-*.patch; do
 		echo "== applying $(basename "$p")"
@@ -98,7 +98,7 @@ if [ ! -x "$TC_PREFIX/bin/$TARGET-ld" ] || [ "$(cat "$BINUTILS_STAMP" 2>/dev/nul
 	make install MAKEINFO=true
 	cd "$WORK"
 	# Reclaim the space before GCC needs it.
-	rm -rf "$WORK/build-binutils" "$WORK/binutils-$BINUTILS_VER"
+	rm -rf "${WORK:?}/build-binutils" "${WORK:?}/binutils-${BINUTILS_VER:?}"
 	echo "$BINUTILS_SUM" > "$BINUTILS_STAMP"
 	echo "== binutils installed"
 fi
@@ -135,7 +135,7 @@ if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ] || [ "$(cat "$ABI_STAMP" 2>/dev
 	python3 "$REPO/toolchain/patch-libstdcxx-configure.py" \
 		"$WORK/gcc-$GCC_VER/libstdc++-v3/configure" "$AMIX_SYSROOT"
 
-	rm -rf "$WORK/build-gcc"; mkdir -p "$WORK/build-gcc"
+	rm -rf "${WORK:?}/build-gcc"; mkdir -p "$WORK/build-gcc"
 	cd "$WORK/build-gcc"
 	# --disable-gcov: libgcov wants MAP_ANONYMOUS and intptr_t, and SVR4.0 has
 	#   neither.  Coverage instrumentation is not something this port needs, and

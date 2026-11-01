@@ -89,7 +89,7 @@ else
 	fail "safe on every 68020..68060 with a 68881 or 68882"
 	sed 's/^/        /' "$OUT/cpu.log"
 fi
-rm -f "$R" "$OUT/cpu.log"
+rm -f "${R:?}" "${OUT:?}/cpu.log"
 
 lib() {  # $1 = soname, $2 = source, the rest = libraries to link against
 	local so="$1" src="$2"
@@ -182,7 +182,7 @@ for f in "$OUT"/*.so.1 "$OUT"/solib-main-rt "$OUT"/solib-main-interpose "$OUT"/s
 	"$READELF" -d "$f" | grep -q TEXTREL && TR="$TR $(basename "$f")"
 done
 if [ -z "$TR" ]; then pass "none"; else fail "text relocations in:$TR"; fi
-rm -f "$LIBC_SYMS"
+rm -f "${LIBC_SYMS:?}"
 
 cat > "$OUT/run-amixrt.sh" <<'EOF'
 # run-amixrt.sh -- run on AMIX, in the directory test-amixrt.sh staged.
