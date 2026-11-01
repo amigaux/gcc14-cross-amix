@@ -38,7 +38,7 @@ TC_TARGET="${TC_TARGET:-m68k-elf}"
 CC="$TC_PREFIX/bin/$TC_TARGET-gcc"
 READELF="$TC_PREFIX/bin/$TC_TARGET-readelf"
 OUT=build/test-pic-globals
-rm -rf "$OUT"
+rm -rf "${OUT:?}"
 mkdir -p "$OUT"
 
 FAILED=0
