@@ -70,10 +70,12 @@ produces a **working binary that behaves wrongly** rather than a build error:
   default visibility so a program's own copy wins. Add a function only when a
   library needs it, with the rest of its libc group. `tools/test-amixrt.sh`
   checks all of it; `docs/TOOLCHAIN.md` has the reasons.
-- **Every program carries the constructor runner, in `amix_init.o`.** It runs
-  shared libraries' constructors after libc is consistent, last in, first
-  out. It cannot move into a library: a library reached only through another
-  one must still find it.
+- **Every program carries the constructor runner, in `amix_init.o`, and
+  exports it.** It runs shared libraries' constructors after libc is
+  consistent, dependencies first, at start-up and, through the specs'
+  `--wrap=dlopen`, after each `dlopen`. It cannot move into a library: a
+  library reached only through another one, or opened with `dlopen`, must
+  still find it.
 - **The vendor's 1991 X archives need repairing before they can be linked.**
   Every object in `libX11.a` has `sh_link` on its `.rela` section pointing at
   itself; modern `ld` silently drops those relocations and the program jumps to

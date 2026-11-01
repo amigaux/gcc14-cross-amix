@@ -874,7 +874,7 @@ So `_init` hands the walk to `__amix_dso_init`, in the program's
 `.init_array` at priority 100: after `crt1.o` has set `_environ` and libc is
 consistent, after libstdc++'s standard streams (priority 90), and before the
 program's own constructors. Like those, they run before `__fpstart`. A library
-that `dlopen` loads later runs at once.
+that `dlopen` loads later runs when the `dlopen` returns (below).
 
 They run last in, first out. `_rtld` loads objects breadth first: it walks
 its list of link maps and appends each object a `DT_NEEDED` names, and the
@@ -890,20 +890,35 @@ order for finalisation.
 The runner is part of `amix_init.o`, which every program links, not a member
 of `libamixc99`: a library that the program reaches only through another
 library's `DT_NEEDED` must still find it, and `ld` searches archives before it
-reads such a library. `ld` exports it whenever a library in the link refers to
-it, directly or not. Every program carries it, used or not: 76 bytes of text,
-8 of bss and a 4-byte `.init_array` entry, which also adds `DT_INIT_ARRAY` and
-`DT_INIT_ARRAYSZ` to `.dynamic` (AMIX's runtime linker ignores both). A
-program linked with this runtime differs from one linked before it by that
-and nothing else: the same programs linked with the new specs and the old
-`amix_init.o` are byte-identical to the old ones.
+reads such a library. The specs export `__amix_dso_init` and
+`__amix_dso_batch` from every program, so that a library it opens with
+`dlopen` finds them even when the program links no library of ours.
+
+**`dlopen` initialises dependencies first too.** Inside one `dlopen` the
+runtime linker calls the `DT_INIT`s of what it loads in the same load order,
+the opened library before its dependencies: measured on a 68030 and a 68060,
+`solib-mid` ran before `solib-dep`. The specs link every program and every
+library with `--wrap=dlopen`, so `dlopen` arrives at `__wrap_dlopen`
+(`compat/amix_dlopen.c`: `libamixc99` for a program, `libamixrt` for a
+library). That brackets the runtime linker's `_dlopen` with
+`__amix_dso_batch`: while it runs, the runner only queues the walks the
+libraries hand it, and afterwards it runs them newest first. A constructor
+that itself calls `dlopen` gets its own bracket, and its libraries are
+initialised before it returns.
+
+Every program carries the runner, used or not: 172 bytes of text, 12 of bss,
+a 4-byte `.init_array` entry (which also adds `DT_INIT_ARRAY` and
+`DT_INIT_ARRAYSZ` to `.dynamic`; AMIX's runtime linker ignores both), and the
+two exported symbols, about 75 bytes of `.dynsym`, `.dynstr` and `.hash`; a
+program file grows by about 500 bytes. A program linked with this runtime
+differs from one linked before it by that and nothing else: the same programs
+linked with the new specs and the old `amix_init.o` are byte-identical to the
+old ones.
 
 `amix_initS.o` refers to `__amix_dso_init` weakly. When it resolves to 0 --
-a program linked by something else, or one of ours that links no shared
-library of ours and opens one with `dlopen`, so that `ld` had no reason to
-export it -- the library runs its own walk at once from `DT_INIT`. For
-`dlopen` that is after the program's start-up, so libc is consistent; the
-order within one `dlopen` is then the runtime linker's.
+a program linked by something else -- the library runs its own walk at once
+from `DT_INIT`, in the runtime linker's order, and a program's `dlopen` is
+the plain one.
 
 **Weak references are safe.** `crtbeginS.o` refers weakly to
 `__register_frame_info` and the `_ITM_` functions. AMIX's own libraries have no
@@ -1015,7 +1030,7 @@ does not export, in one position-independent shared object:
 
 - `libamixc99`, built with `-fPIC`: `snprintf`, `vsnprintf`, `usleep`,
   `strcasecmp`, `strncasecmp`, `strsignal`, `__cxa_atexit`,
-  `__cxa_finalize`;
+  `__cxa_finalize`, and `__wrap_dlopen`;
 - our own implementations of functions AMIX has only as static members of
   `usr/ccs/lib/libc.so`: `gettimeofday` and `settimeofday`, `select`,
   `truncate` and `ftruncate`, `realpath`, `getitimer` and `setitimer`, and
@@ -1073,14 +1088,15 @@ which `_rt_setaddr` rebinds libc to, and `_cerror`. Three of them also define
 a name it does not export: `environ` (every program has it, `crt1.o` pulls
 it in), the FP-exception commons of `fpstart0.o`, and the `sys3b` wrapper.
 
-**What it costs**, measured on the files: the text segment is 19,944 bytes,
-five 4 KB pages shared by every process, of which a process touches only what
-it calls; the data segment is 1,124 bytes, one private page for each process
-that loads it, written by its 200 `R_68K_RELATIVE` relocations (the table
-pointers) and its GOT. 22,372 bytes on disk stripped. A process that uses no
-library needing it pays nothing. `tools/test-amixrt.sh` stages `ram-plain` and
-`ram-amixrt`, the same program with and without it mapped, to measure the page
-on the machine.
+**What it costs.** The text segment is 20,200 bytes, shared by every
+process, of which a process touches only what it calls; the data segment is
+1,136 bytes, written by 200 `R_68K_RELATIVE` relocations (the table pointers)
+and the GOT, so it is private to each process that loads the library. AMIX's
+68030 kernels map in 2 KiB pages and the 68060 port's in 4 KiB, and the data
+segment does not start on a page boundary: measured with `ram-measure.sh` on a
+68030 with a 1.1 kernel, a process that loads `libamixrt.so.1` costs 2 pages
+of 2 KiB, 4 KiB, more than one that does not. 22,640 bytes on disk stripped.
+A process that uses no library needing it pays nothing.
 
 `tools/test-amixrt.sh` checks all of the above on the host -- the exports
 exactly, nothing shared with `libc.so.1`, everything it uses exported by
@@ -1090,5 +1106,7 @@ library the program reaches only through another library, so `libamixrt`'s
 copies are the ones used (`probe/solib-main-rt.c`); state set in the program
 and read in such a library and the other way round, for `drand48`, the syslog
 mask and the interval timers (`probe/solib-main-interpose.c`); and a library
-stack loaded with `dlopen` (`probe/solib-dlopen.c`). `tools/test-compat-host.sh`
-runs `realpath` and `select` on the host against its own.
+stack loaded with `dlopen`, whose dependencies must be initialised first
+(`probe/solib-dlopen.c`). It also checks that every staged file's segments
+map right in 2 KiB, 4 KiB and 8 KiB pages. `tools/test-compat-host.sh` runs
+`realpath` and `select` on the host against its own.
