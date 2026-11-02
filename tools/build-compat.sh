@@ -24,6 +24,7 @@ TC_TARGET="${TC_TARGET:-m68k-elf}"
 if [ -x "$TC_PREFIX/bin/$TC_TARGET-gcc" ]; then
 	CC="$TC_PREFIX/bin/$TC_TARGET-gcc"
 	AR="$TC_PREFIX/bin/$TC_TARGET-ar"
+	STRIP="$TC_PREFIX/bin/$TC_TARGET-strip"
 	INC=""
 else
 	echo "build-compat.sh: using the fallback compiler ($MODERN_GCC)"
@@ -119,9 +120,16 @@ if [ -z "$INC" ] && [ -f "$LIBGCC" ]; then
 		$RT_OBJS "$RT/amixrt_tables.o" "$RT/amixrt_syscall.o" -lgcc
 	# Installed in a directory of its own, which the specs find with
 	# %:find-file(amixrt): -L for `gcc -shared`, -rpath-link for every link.
+	# Installed stripped: the members linked from libgcc.a carry DWARF 5,
+	# which AMIX's sdb cannot read, and it is a third of the file.  For a
+	# shared object --strip-unneeded removes .symtab and the debug sections
+	# and keeps .dynsym, .dynstr, .hash, .dynamic and the dynamic relocations,
+	# which is all the runtime linker and ld (linking against it) read.  The
+	# unstripped copy stays in $RT.
 	RTDIR="$TC_PREFIX/$TC_TARGET/lib/amixrt"
 	mkdir -p "$RTDIR"
-	cp "$RT/libamixrt.so.1" "$RTDIR/libamixrt.so.1"
+	rm -f "${RTDIR:?}/libamixrt.so.1"
+	"$STRIP" --strip-unneeded -o "$RTDIR/libamixrt.so.1" "$RT/libamixrt.so.1"
 	ln -sf libamixrt.so.1 "$RTDIR/libamixrt.so"
 	echo "build-compat.sh: installed $RTDIR/libamixrt.so.1"
 else

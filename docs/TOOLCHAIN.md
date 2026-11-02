@@ -1095,7 +1095,9 @@ and the GOT, so it is private to each process that loads the library. AMIX's
 68030 kernels map in 2 KiB pages and the 68060 port's in 4 KiB, and the data
 segment does not start on a page boundary: measured with `ram-measure.sh` on a
 68030 with a 1.1 kernel, a process that loads `libamixrt.so.1` costs 2 pages
-of 2 KiB, 4 KiB, more than one that does not. 22,640 bytes on disk stripped.
+of 2 KiB, 4 KiB, more than one that does not. It is installed stripped
+(`--strip-unneeded`: no `.symtab`, no DWARF, `.dynsym` kept), 22,728 bytes
+on disk.
 A process that uses no library needing it pays nothing.
 
 `tools/test-amixrt.sh` checks all of the above on the host -- the exports
