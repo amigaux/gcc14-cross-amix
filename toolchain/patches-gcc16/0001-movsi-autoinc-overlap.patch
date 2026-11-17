@@ -1,0 +1,75 @@
+m68k: reject an SImode move whose (An)+ or -(An) source register appears in the destination.
+
+Author: Mikael Pettersson
+Origin: https://github.com/AmigaPorts/gcc (branch amiga16.2, tag m68k-amigaos-gcc-v16.2-rc24) commit 4e957e9cc55260b7809a908f97e8be7d066882e0
+Upstream: PR rtl-optimization/123853, not in GCC 16.2.0
+Licence: GPL-3.0-or-later, as the GCC sources it changes.
+The diff only (testsuite files left out), regenerated against GCC 16.2.0.
+
+diff -u a/gcc/config/m68k/m68k.cc b/gcc/config/m68k/m68k.cc
+--- a/gcc/config/m68k/m68k.cc
++++ b/gcc/config/m68k/m68k.cc
+@@ -3227,6 +3227,31 @@
+   return TARGET_ISAB && (i == -1 || IN_RANGE (i, 1, 7));
+ }
+ 
++/* Return true if OPERANDS[] are valid for output_move_simode.
++   In particular, if SRC is a MEM with auto-inc/dec adressing and
++   its REG is mentioned in DST, it's invalid.  See PR123853.  */
++
++bool
++check_move_simode (const rtx *operands)
++{
++  rtx src = operands[1];
++  if (MEM_P (src))
++    {
++      rtx src1 = XEXP (src, 0);
++      if (GET_CODE (src1) == PRE_DEC || GET_CODE (src1) == POST_INC)
++	{
++	  rtx src2 = XEXP (src1, 0);
++	  if (REG_P (src2))
++	    {
++	      rtx dst = operands[0];
++	      if (reg_overlap_mentioned_p (src2, dst))
++		return false;
++	    }
++	}
++    }
++  return true;
++}
++
+ /* Return an instruction to move CONST_INT OPERANDS[1] into OPERANDS[0].
+    I is the value of OPERANDS[1].  */
+ 
+diff -u a/gcc/config/m68k/m68k.md b/gcc/config/m68k/m68k.md
+--- a/gcc/config/m68k/m68k.md
++++ b/gcc/config/m68k/m68k.md
+@@ -993,7 +993,7 @@
+   ;; We don't allow f-regs since fixed point cannot go in them.
+   [(set (match_operand:SI 0 "nonimmediate_operand" "=g,d,a<")
+         (match_operand:SI 1 "general_src_operand" "damSnT,n,i"))]
+-  "!TARGET_COLDFIRE && reload_completed"
++  "!TARGET_COLDFIRE && reload_completed && check_move_simode (operands)"
+ {
+   return output_move_simode (operands);
+ }
+@@ -1006,7 +1006,7 @@
+   [(set (match_operand:SI 0 "nonimmediate_operand" "=g,d,a<")
+         (match_operand:SI 1 "general_src_operand" "damSKT,n,i"))]
+ 
+-  "!TARGET_COLDFIRE"
++  "!TARGET_COLDFIRE && check_move_simode (operands)"
+ {
+   return output_move_simode (operands);
+ }
+diff -u a/gcc/config/m68k/m68k-protos.h b/gcc/config/m68k/m68k-protos.h
+--- a/gcc/config/m68k/m68k-protos.h
++++ b/gcc/config/m68k/m68k-protos.h
+@@ -26,6 +26,7 @@
+ extern void split_di (rtx[], int, rtx[], rtx[]);
+ 
+ extern bool valid_mov3q_const (HOST_WIDE_INT);
++extern bool check_move_simode (const rtx *);
+ extern const char *output_move_simode (rtx *);
+ extern const char *output_move_himode (rtx *);
+ extern const char *output_move_qimode (rtx *);

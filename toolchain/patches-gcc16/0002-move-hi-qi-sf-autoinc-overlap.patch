@@ -1,0 +1,54 @@
+m68k: the same check for the HImode, QImode and SFmode moves.
+
+Author: Bernie Innocenti
+Origin: https://github.com/AmigaPorts/gcc (branch amiga16.2, tag m68k-amigaos-gcc-v16.2-rc24) commit 0ce2e0f01ba39ac357a00b5d90621390076a1439
+Upstream: PR rtl-optimization/123853 follow-up, not in GCC
+Licence: GPL-3.0-or-later, as the GCC sources it changes.
+The diff only (testsuite files left out), regenerated against GCC 16.2.0.
+
+diff -u a/gcc/config/m68k/m68k.cc b/gcc/config/m68k/m68k.cc
+--- a/gcc/config/m68k/m68k.cc
++++ b/gcc/config/m68k/m68k.cc
+@@ -3228,8 +3228,10 @@
+ }
+ 
+ /* Return true if OPERANDS[] are valid for output_move_simode.
+-   In particular, if SRC is a MEM with auto-inc/dec adressing and
+-   its REG is mentioned in DST, it's invalid.  See PR123853.  */
++   In particular, if SRC is a MEM with auto-inc/dec addressing and
++   its REG is mentioned in DST, it's invalid.  See PR123853.
++   The check does not depend on the mode: the HI, QI and SF move insns
++   use it too, since late-combine produces the same shape for them.  */
+ 
+ bool
+ check_move_simode (const rtx *operands)
+diff -u a/gcc/config/m68k/m68k.md b/gcc/config/m68k/m68k.md
+--- a/gcc/config/m68k/m68k.md
++++ b/gcc/config/m68k/m68k.md
+@@ -1085,7 +1085,7 @@
+ (define_insn ""
+   [(set (match_operand:HI 0 "nonimmediate_operand" "=g")
+         (match_operand:HI 1 "general_src_operand" "gS"))]
+-  "!TARGET_COLDFIRE"
++  "!TARGET_COLDFIRE && check_move_simode (operands)"
+   "* return output_move_himode (operands);"
+   [(set (attr "flags_valid")
+ 	(if_then_else (match_operand 0 "address_reg_operand")
+@@ -1131,7 +1131,7 @@
+ (define_insn ""
+   [(set (match_operand:QI 0 "nonimmediate_operand" "=d,*a,m")
+ 	(match_operand:QI 1 "general_src_operand" "dmSi*a,di*a,dmSi"))]
+-  "!TARGET_COLDFIRE"
++  "!TARGET_COLDFIRE && check_move_simode (operands)"
+   "* return output_move_qimode (operands);"
+   [(set_attr "flags_valid" "set")])
+ 
+@@ -1210,7 +1210,7 @@
+ (define_insn ""
+   [(set (match_operand:SF 0 "nonimmediate_operand" "=rmf")
+ 	(match_operand:SF 1 "general_operand" "rmfF"))]
+-  "!TARGET_COLDFIRE"
++  "!TARGET_COLDFIRE && check_move_simode (operands)"
+ {
+   if (FP_REG_P (operands[0]))
+     {

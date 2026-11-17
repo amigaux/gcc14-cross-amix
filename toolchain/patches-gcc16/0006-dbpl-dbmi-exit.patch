@@ -1,0 +1,25 @@
+m68k: leave a dbpl/dbmi loop on pl/mi, not le, which also takes a zero result.
+
+Author: Bernie Innocenti
+Origin: https://github.com/AmigaPorts/gcc (branch amiga16.2, tag m68k-amigaos-gcc-v16.2-rc24) commit 209cea17230bf8de3c5796eccce1274faa50eafd
+Upstream: not in GCC
+Licence: GPL-3.0-or-later, as the GCC sources it changes.
+The diff only (testsuite files left out), regenerated against GCC 16.2.0.
+
+diff -u a/gcc/config/m68k/m68k.cc b/gcc/config/m68k/m68k.cc
+--- a/gcc/config/m68k/m68k.cc
++++ b/gcc/config/m68k/m68k.cc
+@@ -1787,11 +1787,11 @@
+ 	break;
+ 
+       case PLUS:
+-	output_asm_insn ("dbpl %0,%l1\n\tjle %l2", operands);
++	output_asm_insn ("dbpl %0,%l1\n\tjpl %l2", operands);
+ 	break;
+ 
+       case MINUS:
+-	output_asm_insn ("dbmi %0,%l1\n\tjle %l2", operands);
++	output_asm_insn ("dbmi %0,%l1\n\tjmi %l2", operands);
+ 	break;
+ 
+       default:

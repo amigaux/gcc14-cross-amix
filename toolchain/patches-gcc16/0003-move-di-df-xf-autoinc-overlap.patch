@@ -1,0 +1,62 @@
+m68k: the same check for the DImode, DFmode and XFmode moves.
+
+Author: SacredTrees
+Origin: https://github.com/AmigaPorts/gcc (branch amiga16.2, tag m68k-amigaos-gcc-v16.2-rc24) commit 43928bfdccc6ecc0cb42d4bc075b51f1b7b8e80d
+Upstream: PR rtl-optimization/123853 follow-up, not in GCC
+Licence: GPL-3.0-or-later, as the GCC sources it changes.
+The diff only (testsuite files left out), regenerated against GCC 16.2.0.
+
+diff -u a/gcc/config/m68k/m68k.cc b/gcc/config/m68k/m68k.cc
+--- a/gcc/config/m68k/m68k.cc
++++ b/gcc/config/m68k/m68k.cc
+@@ -3231,7 +3231,10 @@
+    In particular, if SRC is a MEM with auto-inc/dec addressing and
+    its REG is mentioned in DST, it's invalid.  See PR123853.
+    The check does not depend on the mode: the HI, QI and SF move insns
+-   use it too, since late-combine produces the same shape for them.  */
++   use it too, since late-combine produces the same shape for them.
++   So do the DI, DF and XF move insns, whose two or three moves
++   (output_move_double) all address the destination after the source's
++   increment or decrement.  */
+ 
+ bool
+ check_move_simode (const rtx *operands)
+diff -u a/gcc/config/m68k/m68k.md b/gcc/config/m68k/m68k.md
+--- a/gcc/config/m68k/m68k.md
++++ b/gcc/config/m68k/m68k.md
+@@ -1358,7 +1358,7 @@
+ 	(match_operand:DF 1 "general_operand" "*rf,m,0,*rfE<>,*rofE<>"))]
+ ;  [(set (match_operand:DF 0 "nonimmediate_operand" "=rm,&rf,&rof<>")
+ ;	(match_operand:DF 1 "general_operand" "rf,m,rofF<>"))]
+-  "!TARGET_COLDFIRE"
++  "!TARGET_COLDFIRE && check_move_simode (operands)"
+ {
+   if (FP_REG_P (operands[0]))
+     {
+@@ -1476,7 +1476,7 @@
+ (define_insn ""
+   [(set (match_operand:XF 0 "nonimmediate_operand" "=f,m,f,!r,!f,!r,m,!r")
+ 	(match_operand:XF 1 "nonimmediate_operand" "m,f,f,f,r,!r,!r,m"))]
+-  "TARGET_68881"
++  "TARGET_68881 && check_move_simode (operands)"
+ {
+   if (FP_REG_P (operands[0]))
+     {
+@@ -1516,7 +1516,7 @@
+ (define_insn ""
+   [(set (match_operand:XF 0 "nonimmediate_operand" "=rm,rf,&rof<>,&rf<>")
+ 	(match_operand:XF 1 "nonimmediate_operand" "rf,m,rf<>,rof<>"))]
+-  "! TARGET_68881 && ! TARGET_COLDFIRE"
++  "! TARGET_68881 && ! TARGET_COLDFIRE && check_move_simode (operands)"
+ {
+   if (FP_REG_P (operands[0]))
+     {
+@@ -1574,7 +1574,7 @@
+ ;	(match_operand:DI 1 "general_operand" "r,m,roi<>,fF"))]
+ ;  [(set (match_operand:DI 0 "nonimmediate_operand" "=rm,&rf,&ro<>,!&rm,!&f")
+ ;	(match_operand:DI 1 "general_operand" "r,m,roi<>,fF,rfF"))]
+-  "!TARGET_COLDFIRE"
++  "!TARGET_COLDFIRE && check_move_simode (operands)"
+ {
+   if (FP_REG_P (operands[0]))
+     {

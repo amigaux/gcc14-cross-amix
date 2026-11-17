@@ -1,0 +1,23 @@
+m68k: subdi_dishl32 must not emit a memory-to-memory sub.l, which does not exist.
+
+Author: Bernie Innocenti
+Origin: https://github.com/AmigaPorts/gcc (branch amiga16.2, tag m68k-amigaos-gcc-v16.2-rc24) commit da450ba3e971a608000436dcc51e0fa2aad2115f
+Upstream: not in GCC
+Licence: GPL-3.0-or-later, as the GCC sources it changes.
+The diff only (testsuite files left out), regenerated against GCC 16.2.0.
+
+diff -u a/gcc/config/m68k/m68k.md b/gcc/config/m68k/m68k.md
+--- a/gcc/config/m68k/m68k.md
++++ b/gcc/config/m68k/m68k.md
+@@ -2874,9 +2874,9 @@
+ })
+ 
+ (define_insn "subdi_dishl32"
+-  [(set (match_operand:DI 0 "nonimmediate_operand" "+ro")
++  [(set (match_operand:DI 0 "nonimmediate_operand" "+r,o")
+     (minus:DI (match_dup 0)
+-        (ashift:DI (match_operand:DI 1 "general_operand" "ro")
++        (ashift:DI (match_operand:DI 1 "general_operand" "ro,d")
+             (const_int 32))))]
+   ""
+ {
