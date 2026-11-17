@@ -188,6 +188,17 @@ library, for a library's pointers to its own data, and for `libamixrt.so.1`;
 [`docs/shared-library-tests.md`](docs/shared-library-tests.md) says how to run
 them on the machine and what to expect.
 
+## A second compiler: GCC 16 for kernel work
+
+`toolchain/build-gcc16.sh` builds a C-only, freestanding GCC 16.2.0 for the
+same target form (`m68k-elf`, `amix-abi.h`, the same compile-side specs) into
+`build/gcc16/prefix`, beside the GCC 14 toolchain and without touching it. It
+has no C library and no C++ runtime; it is meant for building a kernel with
+both compilers and comparing them. `tools/test-kernel-codegen.sh` runs the
+comparison test set in `tests/kernel-codegen/`. Why GCC 16.2.0 with a few m68k
+fixes rather than the AmigaPorts branch, and what the two compilers do
+differently, is in [`docs/GCC16.md`](docs/GCC16.md).
+
 ## Status
 
 Working: C and C++ compilation and linking, `libgcc`, `libsupc++`, a **hosted**
