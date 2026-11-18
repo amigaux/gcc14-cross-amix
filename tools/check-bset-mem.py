@@ -41,9 +41,10 @@ reported the same way.
 
 "Shown" is a small forward walk over each basic block: a register's value is
 known after moveq/move.l #k, clr.l, and.l with a non-negative constant or a
-register holding one, move.l from a known register, and add/sub of known
-values.  A label, a branch target, the start of a function or a call ends what
-is known.  So a finding is a place the scan could not prove safe, not proof
+register holding one, move.l from a known register, add/sub of known values,
+and bfextu of a constant width; and.b/and.w #m bounds the low part, which is
+all BSET, BCLR and BTST read.  A label, a branch target, the start of a
+function or a call ends what is known.  So a finding is a place the scan could not prove safe, not proof
 of a fault: a number masked with & 7 in another block is not seen as small.
 A site that has been read and found safe can be named with --allow FUNCTION.
 
@@ -51,21 +52,40 @@ Input: GCC assembly output (gcc -S, Motorola syntax as GCC prints it),
 objdump -d listings, or ELF objects, archives, executables and shared
 libraries (disassembled here with an m68k objdump: --objdump, $OBJDUMP,
 config.sh's TC_PREFIX, then m68k-elf-objdump on PATH).  A directory is
-searched for *.s, *.o, *.a, *.so* and *.dis.
+searched for *.s, *.o, *.a, *.so*, *.dis and any other ELF file or archive
+(programs have no suffix).  Every section objdump -d disassembles is code,
+whatever its name (a kernel's can be ""; it was once missed for that).
+
+A file in which nothing was decoded is never a pass: that is exit 2.  A
+file with no code at all (a data-only object) is too, unless --no-code-ok
+is given; then it passes if its ELF section headers show no executable
+bytes.
 
 objdump decodes GCC's switch tables, which sit in .text right after their
 `jmp %pc@(...)`, as instructions: in libstdc++ that alone made six bogus
-findings.  A table is skipped here -- its length from the bounds check
-before the jmp, or up to the first word that is not an even address in the
-function, or the first case it reaches -- and when objdump ran the table's
+findings, and in the published 1.1 binaries 472.  A table is skipped here.
+Its base is the address the jmp names; words between the jmp and the base
+are a count prefix (4afc N, the SVR4 compiler's swbeg, or 0000 N, GCC
+2.7.2.3), N entries.  Without one, the length comes from the bounds check:
+the compare before the last unsigned branch (bhi, bcs, bls, bcc) before the
+jmp -- cmpi or cmpa #N, or cmp with a register loaded with N, read unsigned
+at the compare's size; a signed branch is a lower bound and is passed over.
+With neither, the table ends at the first word that is not an even address
+in the function, or at the first case it reaches.  The index may be any
+data or address register, %fp and %sp included.  When objdump ran the table's
 last word together with the first real instruction, the code after it is
 decoded again from there (objdump --start-address), so nothing real is
 swallowed.  An objdump listing given as input cannot be decoded again; a
 table that loses step there is reported as a finding.
 
-Usage: check-bset-mem.py [--objdump PATH] [--allow FUNC]... [-q] FILE|DIR ...
+Data in .text that is not a switch table (constant tables in a stripped
+program) can still decode as one of these instructions and be flagged.
+
+Usage: check-bset-mem.py [--objdump PATH] [--allow FUNC]... [--no-code-ok] [-q]
+                         FILE|DIR ...
 Exit status 0 if nothing is flagged, 1 if anything is, 2 if an input could
-not be read.
+not be read or nothing in it was decoded.  tools/test-check-bset-mem.sh runs
+the regression cases in tests/check-bset-mem/.
 """
 import os
 import re
@@ -126,11 +146,21 @@ def disassemble(path, explicit, extra=()):
 OBJ_INSN = re.compile(r"^\s*([0-9a-f]+):\t((?:[0-9a-f]{4} ?)+)\s*\t(\S+)\s*(.*)$")
 # GCC's switch: "jmp %pc@(d22 <f+0x54>,%d0:w)" followed by a table of 16-bit
 # offsets from d22 in .text, which objdump decodes as instructions.
-OBJ_SWITCH = re.compile(r"^%pc@\(([0-9a-f]+)\b[^,]*,%[ad][0-7]:[wl]\)$")
-OBJ_LABEL = re.compile(r"^([0-9a-f]+) <([^>]+)>:")
+# The index may be any data or address register, %fp and %sp included.
+# Without symbols objdump prints the base as 0x115a4 and names no label.
+OBJ_SWITCH = re.compile(r"^%pc@\((?:0x)?([0-9a-f]+)\b[^,]*,%(?:[ad][0-7]|fp|sp):[wl](?::[1248])?\)$")
+OBJ_LABEL = re.compile(r"^([0-9a-f]+) <([^>]*)>:")
 OBJ_MEMBER = re.compile(r"^(\S+):\s+file format ")
-OBJ_SECTION = re.compile(r"^Disassembly of section (\S+):")
-OBJ_TARGET = re.compile(r"^([0-9a-f]+) <")
+# The name may be empty: a kernel whose section header 0 is named .text
+# with type NULL makes objdump print "Disassembly of section :".
+OBJ_SECTION = re.compile(r"^Disassembly of section (\S*):")
+# Sections that hold no code, for a listing made with objdump -D.  objdump -d,
+# which this tool runs itself, disassembles only code sections.
+DATA_SECTIONS = (".data", ".rodata", ".bss", ".sdata", ".sbss", ".debug",
+                 ".comment", ".eh_frame", ".gcc_except_table", ".got", ".dyn",
+                 ".rel", ".note", ".symtab", ".strtab", ".shstrtab", ".ctors",
+                 ".dtors", ".init_array", ".fini_array", ".hash", ".interp")
+OBJ_TARGET = re.compile(r"^(?:0x)?([0-9a-f]+)(?: <|$)")
 # GCC assembly: "\tbset %d0,(%a0)", "name:", ".L3:"
 ASM_LABEL = re.compile(r"^([A-Za-z_.$][\w.$]*):")
 ASM_INSN = re.compile(r"^\s+([a-z][a-z0-9.]*)\s*(.*)$")
@@ -201,9 +231,19 @@ def imm(op):
 
 
 # ------------------------------------------------------------- the walk -----
+def rng(v):
+    """v if it is a plain (lo, hi) range, else None."""
+    return v if isinstance(v, tuple) and len(v) == 2 and isinstance(v[0], int) else None
+
+
 class Walker:
-    """Known values of %d0-%d7 inside one basic block.  A value is
-    (lo, hi), or the marker SEVEN_MINUS for "7 - x, x not known 0..7"."""
+    """Known values of %d0-%d7 inside one basic block.  A value is (lo, hi);
+    ("low", m, part) for a register whose low byte or word (part 0xff or
+    0xffff) was masked with m (and.b/and.w #m): its upper bits are unknown,
+    but BSET, BCLR and BTST on memory use only the low three bits, so m <= 7
+    is enough for them, and a later and.l with a mask inside the part makes
+    it a plain range; or the marker SEVEN_MINUS for "7 - x, x not known
+    0..7"."""
     SEVEN_MINUS = "7-x"
 
     def __init__(self):
@@ -221,7 +261,10 @@ class Walker:
 
     def known_small(self, n):
         v = self.r.get(n)
-        return isinstance(v, tuple) and 0 <= v[0] and v[1] <= 7
+        if isinstance(v, tuple) and v[0] == "low":
+            return 0 <= v[1] <= 7
+        v = rng(v)
+        return v is not None and 0 <= v[0] and v[1] <= 7
 
     def step(self, mn, size, ops):
         """Update the state for one instruction."""
@@ -253,8 +296,9 @@ class Walker:
         if len(dests) == 1:
             d = next(iter(dests))
             src = ops[0] if len(ops) == 2 else None
-            old = self.r.get(d)
-            sv = self.get(src) if src is not None else None
+            old_any = self.r.get(d)
+            old = rng(old_any)
+            sv = rng(self.get(src)) if src is not None else None
             long_op = size in ("l", "") and mn not in ("movea",)
             if mn == "moveq" and sv:
                 new = sv
@@ -265,18 +309,39 @@ class Walker:
             elif mn in ("and", "andi") and long_op and len(ops) == 2:
                 bound = None
                 for v in (sv, old):
-                    if isinstance(v, tuple) and v[0] >= 0:
+                    if v is not None and v[0] >= 0:
                         bound = v[1] if bound is None else min(bound, v[1])
+                if (isinstance(old_any, tuple) and old_any[0] == "low" and sv is not None
+                        and sv[0] == sv[1] and 0 <= sv[0] <= old_any[2]):
+                    bound = min(sv[0], old_any[1])      # the mask keeps only the masked part
                 if bound is not None:
                     new = (0, bound)
+            elif mn in ("and", "andi") and size in ("b", "w") and len(ops) == 2:
+                # A byte or word mask leaves the upper bits as they were.
+                if sv is not None and sv[0] >= 0 and sv[1] < (0x100 if size == "b" else 0x10000):
+                    if old is not None and old[0] >= 0 and old[1] < (0x100 if size == "b" else 0x10000):
+                        new = (0, min(sv[1], old[1]))
+                    else:
+                        new = ("low", sv[1], 0xff if size == "b" else 0xffff)
             elif mn in ("sub", "subi", "subq") and long_op and len(ops) == 2:
-                if isinstance(old, tuple) and isinstance(sv, tuple):
+                if old is not None and sv is not None:
                     new = (old[0] - sv[1], old[1] - sv[0])
                 elif old == (7, 7):
                     new = self.SEVEN_MINUS
             elif mn in ("add", "addi", "addq") and long_op and len(ops) == 2:
-                if isinstance(old, tuple) and isinstance(sv, tuple):
+                if old is not None and sv is not None:
                     new = (old[0] + sv[0], old[1] + sv[1])
+            elif mn == "bfextu":
+                # The field width is the value's width: {o:#w} or ,o,w,
+                w = None
+                for o in ops:
+                    mw = re.match(r"^.*\{[^:]+:#?(\d+)\}$", o)
+                    if mw:
+                        w = int(mw.group(1))
+                if w is None and len(ops) == 4 and re.match(r"^\d+$", ops[2]):
+                    w = int(ops[2])
+                if w is not None and 1 <= w <= 31:
+                    new = (0, (1 << w) - 1)
         for d in dests:
             self.r.pop(d, None)
         if new is not None:
@@ -331,9 +396,12 @@ def check(mn, ops, w):
 
 
 # ------------------------------------------------------------- the scan -----
-def parse_listing(text):
+def parse_listing(text, all_code=True):
     """objdump -d text as records: ("member", name), ("section", in_code, name),
-    ("label", addr, name) and ("insn", addr, words, mnemonic, operands)."""
+    ("label", addr, name) and ("insn", addr, words, mnemonic, operands).
+    objdump -d disassembles only code sections, so every section in its
+    output is code; for a listing of unknown making (all_code false) the
+    sections named in DATA_SECTIONS are not."""
     recs = []
     for line in text.split("\n"):
         mm = OBJ_MEMBER.match(line)
@@ -343,7 +411,7 @@ def parse_listing(text):
         ms = OBJ_SECTION.match(line)
         if ms:
             name = ms.group(1).rstrip(":")
-            recs.append(("section", name.startswith((".text", ".init", ".fini")), name))
+            recs.append(("section", all_code or not name.startswith(DATA_SECTIONS), name))
             continue
         ml = OBJ_LABEL.match(line)
         if ml:
@@ -360,9 +428,9 @@ def redecode(path, objdump, member, section, start, stop):
     from start: what objdump makes of the code after a switch table when it is
     not carried over from the table's last words.  (The addresses apply to
     every section of every member, hence the filter.)"""
-    text, _ = disassemble(path, objdump, ["-j", section,
-                                          "--start-address=0x%x" % start,
-                                          "--stop-address=0x%x" % stop])
+    extra = ["-j", section] if section else []
+    text, _ = disassemble(path, objdump, extra + ["--start-address=0x%x" % start,
+                                                  "--stop-address=0x%x" % stop])
     cur, sec, got = "", "", []
     for r in parse_listing(text):
         if r[0] == "member":
@@ -384,29 +452,71 @@ def function_end(recs, i):
     return float("inf")
 
 
+UNSIGNED_BRANCH = re.compile(r"^[bj](hi|cs|lo|ls|cc|hs)[bswl]?$")
+
+
+def const_of(recs, k, op):
+    """The constant in op at recs[k]: an immediate, or a data register loaded
+    with moveq/move.l #N in the few instructions before it."""
+    if imm(op) is not None:
+        return imm(op)
+    if not DREG.match(op):
+        return None
+    for q in range(k - 1, max(k - 8, -1), -1):
+        r = recs[q]
+        if r[0] != "insn":
+            return None
+        mn, size = norm(r[3])
+        ops = split_ops(r[4])
+        if is_branch(mn) in ("call", "end") or mn in ("exg", "movem"):
+            return None             # a call returns in %d0/%d1
+        if ops and ops[-1] == op:
+            if (mn == "moveq" or (mn == "move" and size == "l")) and len(ops) == 2:
+                return imm(ops[0])
+            return None
+        if ops and op in re.findall(r"%d[0-7]", ops[-1]):
+            return None             # a register pair, as in divul
+    return None
+
+
 def switch_entries(recs, j):
     """The number of entries of the switch table whose jmp is recs[j], from
-    the bounds check GCC puts before it (cmpi #N,%dX, or moveq #N,%dY and a
-    cmp against %dY, then a branch to the default): N + 1, or None."""
-    moveq = {}
-    seen = 0
-    for k in range(j - 1, max(j - 12, -1), -1):
+    the bounds check before it: the last unsigned branch (bhi, bcs, bls,
+    bcc) before the jmp and the compare right before that branch.  A signed
+    branch (bge, blt...) is a lower bound and is passed over.  The compare
+    is cmpi or cmpa #N, or cmp against a register holding N; N is read at
+    the compare's size, unsigned (cmpi.b #-61 is 195).  N + 1, N or None."""
+    for k in range(j - 1, max(j - 12, 0), -1):
         r = recs[k]
         if r[0] != "insn":
-            break
-        mn, _ = norm(r[3])
-        ops = split_ops(r[4])
-        if mn == "cmpi" and len(ops) == 2 and imm(ops[0]) is not None:
-            return imm(ops[0]) + 1
-        if mn == "cmp" and len(ops) == 2:
-            seen = ops
-        if mn == "moveq" and len(ops) == 2 and seen and ops[1] in seen:
-            return imm(ops[0]) + 1
+            return None
+        bm = UNSIGNED_BRANCH.match(r[3].split(".")[0])
+        if not bm:
+            continue
+        c = recs[k - 1]
+        if c[0] != "insn":
+            return None
+        mn, size = norm(c[3])
+        ops = split_ops(c[4])
+        if mn not in ("cmp", "cmpi", "cmpa") or len(ops) != 2:
+            return None
+        mask = {"b": 0xff, "w": 0xffff}.get(size, 0xffffffff)
+        cond = bm.group(1)
+        src, dst = const_of(recs, k - 1, ops[0]), const_of(recs, k - 1, ops[1])
+        if src is not None:          # flags of index - N
+            n = src & mask
+            return n + 1 if cond in ("hi", "ls") else n
+        if dst is not None:          # flags of N - index
+            n = dst & mask
+            return n if cond in ("hi", "ls") else n + 1
+        return None
     return None
 
 
 def scan_objdump(path, text, allow, out, objdump=None):
-    recs = parse_listing(text)
+    """Scan an objdump -d listing; returns (findings, instructions decoded).
+    With objdump given (the listing was made here) every section is code."""
+    recs = parse_listing(text, all_code=objdump is not None)
     # Branch targets per member, so a join in the middle ends what is known.
     targets, member = set(), ""
     for r in recs:
@@ -418,7 +528,7 @@ def scan_objdump(path, text, allow, out, objdump=None):
                 targets.add((member, int(t.group(1), 16)))
     func, member, section, in_code, table, fstart = "?", "", "", False, None, 0
     w = Walker()
-    found = 0
+    found = ninsn = 0
     i = 0
     while i < len(recs):
         r = recs[i]
@@ -439,12 +549,20 @@ def scan_objdump(path, text, allow, out, objdump=None):
         _, addr, words, mnem, opstext = r
         if table is not None:
             # Inside a switch table: each word is an offset from its base.
-            # It ends after the number of entries the bounds check before the
+            # Words between the jmp and the base are a count prefix, not
+            # entries: 4afc N (illegal + count, the SVR4 compiler's swbeg) or
+            # 0000 N (GCC 2.7.2.3); N is the number of entries.  Without one,
+            # the table ends after the entries the bounds check before the
             # jmp allows, or else at the first word that is not an even
             # address inside the function, or at the first case it reaches.
-            base, tend, nent, fstart, fend = table
+            base, tend, nent, fstart, fend, prefix = table
             for k, word in enumerate(words):
                 a = addr + 2 * k
+                if a < base:
+                    prefix.append(int(word, 16))
+                    if len(prefix) == 2 and prefix[0] in (0x4afc, 0x0000) and a + 2 == base:
+                        nent = prefix[1]
+                    continue
                 if a >= tend:
                     break
                 if nent is not None and a >= base + 2 * nent:
@@ -452,14 +570,17 @@ def scan_objdump(path, text, allow, out, objdump=None):
                     break
                 off = int(word, 16)
                 t = base + (off - 0x10000 if off & 0x8000 else off)
-                if t & 1 or not fstart <= t < fend:
+                # With the count known, every entry is one; a label between
+                # the table and a case (a stripped program's few symbols)
+                # must not end it.
+                if nent is None and (t & 1 or not fstart <= t < fend):
                     tend = a
                     break
                 targets.add((member, t))
                 if t > a:
                     tend = min(tend, t)
             if addr < tend and addr + 2 * len(words) <= tend:
-                table = (base, tend, nent, fstart, fend)
+                table = (base, tend, nent, fstart, fend, prefix)
                 continue
             table = None
             if addr != tend:
@@ -483,6 +604,7 @@ def scan_objdump(path, text, allow, out, objdump=None):
                 continue
         if (member, addr) in targets:
             w.reset()
+        ninsn += 1
         mn, size = norm(mnem)
         ops = split_ops(opstext)
         why = check(mn, ops, w)
@@ -495,7 +617,7 @@ def scan_objdump(path, text, allow, out, objdump=None):
             if sw:
                 fend = function_end(recs, i)
                 table = (int(sw.group(1), 16), float("inf"), switch_entries(recs, i - 1),
-                         fstart, fend)
+                         fstart, fend, [])
         kind = is_branch(mn)
         if kind == "end":
             w.reset()
@@ -504,13 +626,14 @@ def scan_objdump(path, text, allow, out, objdump=None):
                 w.r.pop(d, None)
         else:
             w.step(mn, size, ops)
-    return found
+    return found, ninsn
 
 
 def scan_asm(path, text, allow, out):
+    """Scan GCC assembly; returns (findings, instructions read)."""
     func = "?"
     w = Walker()
-    found = 0
+    found = ninsn = 0
     for lineno, line in enumerate(text.split("\n"), 1):
         ml = ASM_LABEL.match(line)
         if ml:
@@ -521,6 +644,7 @@ def scan_asm(path, text, allow, out):
         m = ASM_INSN.match(line)
         if not m or m.group(1).startswith("."):
             continue
+        ninsn += 1
         mn, size = norm(m.group(1))
         ops = split_ops(m.group(2))
         why = check(mn, ops, w)
@@ -535,10 +659,53 @@ def scan_asm(path, text, allow, out):
                 w.r.pop(d, None)
         else:
             w.step(mn, size, ops)
-    return found
+    return found, ninsn
 
 
 SUFFIXES = (".s", ".o", ".a", ".dis")
+
+
+def elf_code_bytes(d):
+    """Bytes in the executable sections (SHF_EXECINSTR, not NOBITS) of an
+    m68k ELF file, read from its section headers (big-endian ELF32)."""
+    import struct
+    if len(d) < 52 or d[4] != 1 or d[5] != 2:
+        return 0
+    shoff, = struct.unpack(">I", d[32:36])
+    shentsize, shnum = struct.unpack(">HH", d[46:50])
+    total = 0
+    for k in range(shnum):
+        o = shoff + k * shentsize
+        if o + 40 > len(d):
+            break
+        _name, typ, flags, _addr, _off, size = struct.unpack(">IIIIII", d[o:o + 24])
+        if flags & 0x4 and typ != 8:
+            total += size
+    return total
+
+
+def code_bytes(d):
+    """The same for an ELF file or every ELF member of an ar archive."""
+    if d[:4] == b"\x7fELF":
+        return elf_code_bytes(d)
+    total, o = 0, 8
+    while d[:8] == b"!<arch>\n" and o + 60 <= len(d):
+        size = int(d[o + 48:o + 58].decode("latin1").strip() or 0)
+        body = d[o + 60:o + 60 + size]
+        if body[:4] == b"\x7fELF":
+            total += elf_code_bytes(body)
+        o += 60 + size + (size & 1)
+    return total
+
+
+def binary(path):
+    """An ELF file or an ar archive, whatever its name (programs have none)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+    except OSError:
+        return False
+    return head[:4] == b"\x7fELF" or head == b"!<arch>\n"
 
 
 def inputs(paths):
@@ -546,14 +713,16 @@ def inputs(paths):
         if os.path.isdir(p):
             for root, _, files in os.walk(p):
                 for f in sorted(files):
-                    if f.endswith(SUFFIXES) or ".so" in f:
-                        yield os.path.join(root, f)
+                    q = os.path.join(root, f)
+                    if f.endswith(SUFFIXES) or ".so" in f or (
+                            not os.path.islink(q) and binary(q)):
+                        yield q
         else:
             yield p
 
 
 def main(argv):
-    allow, paths, objdump, quiet = set(), [], None, False
+    allow, paths, objdump, quiet, no_code_ok = set(), [], None, False, False
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -566,6 +735,8 @@ def main(argv):
             continue
         if a == "-q":
             quiet = True
+        elif a == "--no-code-ok":
+            no_code_ok = True
         elif a in ("-h", "--help"):
             print(__doc__)
             return 0
@@ -575,8 +746,8 @@ def main(argv):
             paths.append(a)
         i += 1
     if not paths:
-        die("usage: %s [--objdump PATH] [--allow FUNC]... [-q] FILE|DIR ..." % PROG)
-    out, found, files = [], 0, 0
+        die("usage: %s [--objdump PATH] [--allow FUNC]... [--no-code-ok] [-q] FILE|DIR ..." % PROG)
+    out, found, files, insns = [], 0, 0, 0
     for path in inputs(paths):
         try:
             with open(path, "rb") as f:     # once: a pipe cannot be read twice
@@ -586,22 +757,38 @@ def main(argv):
         files += 1
         if data[:4] == b"\x7fELF" or data[:8] == b"!<arch>\n":
             text, used = disassemble(path, objdump)
-            found += scan_objdump(path, text, allow, out, used)
-            continue
-        text = data.decode("latin1")
-        if "Disassembly of section" in text:
-            found += scan_objdump(path, text, allow, out)
-        elif path.endswith(".s") or "\t.text" in text or "#NO_APP" in text:
-            found += scan_asm(path, text, allow, out)
+            n, ninsn = scan_objdump(path, text, allow, out, used)
         else:
-            die("%s is neither assembly, an objdump listing nor an ELF file -- "
-                "refusing to report it clean" % path)
+            text = data.decode("latin1")
+            if "Disassembly of section" in text:
+                n, ninsn = scan_objdump(path, text, allow, out)
+            elif path.endswith(".s") or "\t.text" in text or "#NO_APP" in text:
+                n, ninsn = scan_asm(path, text, allow, out)
+            else:
+                die("%s is neither assembly, an objdump listing nor an ELF file -- "
+                    "refusing to report it clean" % path)
+        # Nothing decoded is never a pass: it means the code was not found
+        # (a kernel whose code section objdump names "", once), not that it
+        # is clean.
+        if ninsn == 0:
+            if no_code_ok and (data[:4] == b"\x7fELF" or data[:8] == b"!<arch>\n") \
+                    and code_bytes(data) == 0:
+                if not quiet:
+                    print("%s: %s holds no code (--no-code-ok)" % (PROG, path))
+                continue
+            if out and not quiet:
+                print("\n".join(out))
+            die("%s: no instructions decoded -- refusing to report it clean%s" % (
+                path, "" if code_bytes(data) else " (it holds no code: --no-code-ok "
+                "passes such a file)" if data[:4] == b"\x7fELF" or data[:8] == b"!<arch>\n" else ""))
+        found += n
+        insns += ninsn
     if out and not quiet:
         print("\n".join(out))
     if not quiet:
-        print("%s: seen %d bset/bclr/btst with a register bit number on memory, "
-              "%d bit-field instructions on memory" % (PROG, SEEN["reg-bit-on-memory"],
-                                                      SEEN["bitfield-on-memory"]))
+        print("%s: %d instructions decoded; seen %d bset/bclr/btst with a register "
+              "bit number on memory, %d bit-field instructions on memory"
+              % (PROG, insns, SEEN["reg-bit-on-memory"], SEEN["bitfield-on-memory"]))
     if found:
         print("%s: %d site(s) in %d file(s) where a register bit number on memory "
               "may not be what the C source meant (GCC PR 126121)" % (PROG, found, files))

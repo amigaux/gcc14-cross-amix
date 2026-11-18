@@ -130,7 +130,7 @@ for i in "${!NAMES[@]}"; do
 		say "ok   $n: no PR 126121 bit-number pattern in the cases (check-bset-mem.py)"
 	else
 		fail "$n: PR 126121 bit-number pattern (see $d/check-bset-mem.txt)"
-		grep -v '^check-bset-mem.py: seen' "$d/check-bset-mem.txt" | sed 's/^/    /' | head -20 | tee -a "$SUMMARY"
+		grep -v 'instructions decoded; seen' "$d/check-bset-mem.txt" | sed 's/^/    /' | head -20 | tee -a "$SUMMARY"
 	fi
 	"$(tool "$cc" nm)" -u $(for c in $RUN_CASES kasm; do echo "$d/$c.o"; done) 2>/dev/null \
 		| awk '/ U / {print $2}' | sort -u > "$d/libcalls.txt"
