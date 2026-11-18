@@ -235,6 +235,9 @@ The six failures are one case, `bitops`, whenever GCC 14 compiled the callee:
 `setbit_char (&a, 10)` must leave `a` alone (`(char) (1 << 10)` is 0) and
 GCC 14 emits `bset %d0,(%a0)`, which sets bit 2. That is GCC PR 126121,
 present in GCC 14.2.0 and in the AmigaPorts branch, fixed here by patch 0008.
+(The GCC 14 build has carried the same fix since 2026-11-18,
+`toolchain/patches/gcc-bset-bclr-mem-bit-number.patch`; with it the six runs
+pass. The results above are from the unpatched GCC 14.)
 The other five run cases pass in all four combinations on all three CPUs,
 which shows both compilers agree on the calling convention for everything the
 cases cover (stack arguments of every width, variadic arguments, struct
@@ -250,7 +253,7 @@ the 64-bit `mulu.l`/`divu.l` as the real CPU does (checked with a one-line
 | structret | 214 → 214 | identical code: struct returns through the buffer in `%a0`, pointer returns in `%a0` and `%d0` |
 | manyargs | 236 → 250 | `many`: identical. `vsum`: `va_arg` code arranged differently, same layout. |
 | inlineasm | 98 → 98 | identical |
-| bitops | 62 → 74 | the PR 126121 fix: `bset` with a variable bit becomes shift + `or.b`; `bclr` with `b & 7` becomes `bfclr` with a computed offset (correct, two instructions longer) |
+| bitops | 62 → 74 | the PR 126121 fix: `bset` with a variable bit becomes shift + `or.b`; `bclr` with `b & 7` becomes `bfclr` with a computed offset (correct, two instructions longer). Without the `& 7` the same `bfclr` is wrong: see below |
 | loops | 122 → 114 | `sum_n` closes with `dbf` and the 32-bit borrow fix-up (`clr.w`, `subq.l`, `bcc`) in both; that comes from the `decrement_and_branch` patterns, which were already right. The other loops use no `dbra`. GCC 16's loop set-up is shorter. |
 | kasm | 204 → 116 | **volatile read-modify-write is merged and narrowed**, see below |
 
@@ -268,6 +271,16 @@ compiler does the same. For a register that must be accessed 32 bits wide
 this is a real change. Options: access such registers through explicit
 accessors (inline asm or a `move.l` helper), or a small back-end patch that
 skips the narrowing when the memory operand is volatile. Not decided here.
+
+**PR 126121 is fixed only for BSET/BCLR.** Measured 2026-11-18 (qemu, 68030,
+68040, 68060): with 0008, `*p &= ~(1 << n)` on a byte, unmasked, compiles to
+`moveq #7,%d0; sub.l n,%d0; bfclr (%a0){%d0:#1}`, and for `n` = 10 the offset
+is -3, so it clears bit 2 of the byte before `*p` -- a write outside the
+object, where the unpatched compiler cleared bit 2 of `*p` itself. GCC 14.2.0
+with the same fix does the same. The bit-field RTL is built by the middle end
+at position 7 - n without bounding `n`; not fixed here and not reported
+upstream. `tools/check-bset-mem.py` flags the form; `docs/TOOLCHAIN.md`, "GCC
+carries one patch", has the details.
 
 ### The AmigaPorts trial, for comparison
 
@@ -313,3 +326,4 @@ structret 204, and it does use `dbra` for `fill` and `count_until`.
   upstream-relevant fixes.
 - Whether the volatile narrowing above affects any register the AMIX kernel
   touches; that is for the kernel's own build to check.
+- A fix for the `bfclr` at `7 - n` that PR 126121's fix leaves (above).

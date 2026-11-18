@@ -1112,3 +1112,87 @@ stack loaded with `dlopen`, whose dependencies must be initialised first
 (`probe/solib-dlopen.c`). It also checks that every staged file's segments
 map right in 2 KiB, 4 KiB and 8 KiB pages. `tools/test-compat-host.sh` runs
 `realpath` and `select` on the host against its own.
+
+## GCC carries one patch: bset/bclr on memory (PR 126121)
+
+**The fault.** BSET and BCLR with the bit number in a data register and a
+memory operand use only the low three bits of the register: `bset %d0,(%a0)`
+with `%d0` = 10 sets bit 2 of the byte. GCC 14.2.0 modelled the full number,
+so for C whose result is defined for every shift count below 32 it emitted a
+bare `bset`/`bclr %dN,<mem>` and changed the wrong bit:
+
+```c
+*p |= (unsigned char) (1 << n);   /* n = 10: (char) 0x400 is 0, *p unchanged */
+*p &= ~(1 << n);                  /* n = 10: low byte 0xff, *p unchanged */
+```
+
+With the unpatched compiler both set or clear bit `n & 7` of `*p`
+(measured under qemu-m68k on its 68030, 68040 and 68060, and in
+`tests/kernel-codegen/bitops.c`). The same is true of a `short` or `char`
+bit number. A number masked with `& 7` in the source was already right.
+
+**The patch.** `toolchain/patches/gcc-bset-bclr-mem-bit-number.patch` is
+Andreas Schwab's fix from GCC master (commit `b407be9e4b`, PR target/126121,
+July 2026; not on `releases/gcc-14` or `releases/gcc-16`), regenerated
+against 14.2.0, where it applies with no offset and no fuzz. It wraps the
+bit number of the four memory patterns (`bsetmemqi`, `*bsetmemqi_ext`,
+`bclrmemqi`, `*bclrmemqi_ext`) in `and 7`, so GCC uses them only when the
+number is known to be below 8. It is the same change as the GCC 16 build's
+`toolchain/patches-gcc16/0008-bset-bclr-mem-bit-number.patch`.
+`build-cross.sh` applies `toolchain/patches/gcc-*.patch` to a fresh GCC tree
+and rebuilds the compiler when a patch or `amix-abi.h` changes (the sum is in
+`$TC_PREFIX/.gcc-inputs.sha256`), so a prefix built before the patch is
+rebuilt on its next run.
+
+**What it changes.** Only code that used those patterns. Built 2026-11-18
+into a separate prefix, the patched compiler's runtime is instruction for
+instruction the same as the unpatched one's: `objdump -d` of `libgcc.a`,
+`libstdc++.a`, `libsupc++.a`, `libamixc99.a`, `libamixrt.so.1`,
+`amix_init.o` and `crtbegin.o` differ in nothing but the archive path. No
+ABI changes and nothing already built has to be rebuilt for the patch's
+sake; code built by the unpatched compiler is wrong only where it holds the
+pattern, which `tools/check-bset-mem.py` finds. In the kernel code-generation
+test set the only case whose code changes is `bitops` (62 to 72 bytes):
+`setbit_char` becomes shift + `or.b`, and `clrbit_char`, which masks with
+`& 7`, becomes `bfclr` at a computed offset.
+
+**What it does not fix.** With the patch, `*p &= ~(1 << n)` on a byte no
+longer matches BCLR, and GCC uses the bit-field instruction instead:
+
+```
+moveq #7,%d0 ; sub.l n,%d0 ; bfclr (%a0){%d0:#1}
+```
+
+BFCLR's offset is signed and may leave the byte, so with `n` = 10 the offset
+is -3 and it clears bit 2 of the byte *before* `*p`: a write outside the
+object, where the unpatched compiler changed a bit inside it. Measured
+under qemu on all three CPUs with three bytes `ff ff ff` and the middle one
+as `*p`: patched GCC 14.2.0 leaves `fb ff ff`, GCC 16.2.0 with 0008 the
+same, the unpatched compiler `ff fb ff`; C says `ff ff ff`. The bit-field RTL
+at position 7 - n is built by the middle end without bounding `n`; the
+m68k fix only stops BCLR from standing in for it. Not fixed here: a fix
+belongs in GCC's combine (or a guard on the m68k bit-field patterns), and
+upstream has not been told. Until then, `n` below 8 is what keeps such code
+right, and the scan below finds the form.
+
+**The scan.** `tools/check-bset-mem.py` reads GCC assembly output (`-S`),
+objdump listings, or objects, archives, executables and shared libraries,
+and flags every `bset`/`bclr`/`btst` with a register bit number on memory
+whose register it cannot show to be 0..7, and every bit-field instruction
+on memory at an offset computed as `7 - n` with `n` not shown below 8. It
+exits 1 when it flags anything, so a build can run it as a gate:
+
+```sh
+tools/check-bset-mem.py build/obj/            # every .o, .a, .s, .so under it
+tools/check-bset-mem.py --objdump "$TC_PREFIX/bin/m68k-elf-objdump" prog lib.a
+m68k-elf-gcc -O2 -S -o - foo.c | tools/check-bset-mem.py /dev/stdin
+```
+
+(`/dev/stdin` works for assembly only.) How it decides, and how it keeps
+switch tables from looking like code, is at the top of the script and in
+`tests/kernel-codegen/README.md`. On `bitops.c` it flags `setbit_char` in
+the unpatched compiler's output and nothing in the patched one's. Over
+`libgcc.a`, `libstdc++.a`, `libsupc++.a`, `libamixc99.a` and
+`libamixrt.so.1` from either compiler it flags nothing: they hold no
+`bset`/`bclr`/`btst` with a register number on memory at all, and 361
+bit-field instructions on memory, none at a `7 - n` offset.

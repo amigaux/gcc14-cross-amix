@@ -113,6 +113,22 @@ for code that will only ever run on a 68060.
 Anyone building m68k software for a 68060 without an ISP handler has the same
 problem, whatever their compiler.
 
+## One GCC fix: bit set and clear on memory
+
+GCC 14.2.0 believed `bset`/`bclr %dN,<memory>` use the whole bit number in
+`%dN`; the CPU uses its low three bits. So `*p |= (unsigned char) (1 << n)` or
+`*p &= ~(1 << n)` with `n` of 8 or more changed bit `n & 7` of `*p`, where C
+changes nothing (GCC PR target/126121). `build-cross.sh` applies upstream's fix,
+`toolchain/patches/gcc-bset-bclr-mem-bit-number.patch`, and rebuilds a
+compiler built without it. The runtime libraries come out instruction for
+instruction the same. `tools/check-bset-mem.py` finds the pattern in objects,
+archives, programs or `gcc -S` output from either compiler and exits 1 when it
+does, for use as a build gate. One form survives the fix -- with it,
+`*p &= ~(1 << n)` becomes a bit-field clear that for `n` of 8 or more writes
+the byte before `*p` -- and the scan flags that too. The details are in
+[`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md), "GCC carries one patch", and in
+[`tests/kernel-codegen/README.md`](tests/kernel-codegen/README.md).
+
 ## What you need
 
 - A Linux host with `gcc`, `g++`, `make`, `python3`, `curl` or `wget`, `bzip2`,
@@ -195,9 +211,9 @@ same target form (`m68k-elf`, `amix-abi.h`, the same compile-side specs) into
 `build/gcc16/prefix`, beside the GCC 14 toolchain and without touching it. It
 has no C library and no C++ runtime; it is meant for building a kernel with
 both compilers and comparing them. `tools/test-kernel-codegen.sh` runs the
-comparison test set in `tests/kernel-codegen/`. Why GCC 16.2.0 with a few m68k
-fixes rather than the AmigaPorts branch, and what the two compilers do
-differently, is in [`docs/GCC16.md`](docs/GCC16.md).
+comparison test set in `tests/kernel-codegen/`, scan included. Why GCC
+16.2.0 with a few m68k fixes rather than the AmigaPorts branch, and what the
+two compilers do differently, is in [`docs/GCC16.md`](docs/GCC16.md).
 
 ## Status
 
