@@ -1229,7 +1229,17 @@ m68k-elf-gcc -O2 -S -o - foo.c | tools/check-bset-mem.py /dev/stdin
 
 (`/dev/stdin` works for assembly only.) How it decides, and how it keeps
 switch tables from looking like code, is at the top of the script and in
-`tests/kernel-codegen/README.md`. On `bitops.c` it flags `setbit_char` in
+`tests/kernel-codegen/README.md`. A file in which it decodes nothing is exit
+2, never a pass; a file with no code at all passes only with
+`--no-code-ok`. Run over every program and library of the published 1.1
+packages (38 packages, 201 files; 2026-11-18), it flags 61 sites: 56 real
+`bset`/`bclr` in X11R6.3 code (x11r63 and xztop), each with a bit number the
+source keeps in 0..7, and 5 constant tables in a stripped program's `.text`
+(DES permutation tables in dropbear and xdm) that decode as `btst`. Before
+the switch-table and bound fixes it flagged 535 there, 472 of them switch-table
+words. The two data-only objects in the kit (`sunfont.o`) are exit 2 without
+`--no-code-ok`. Each of those fixes has a regression case in
+`tests/check-bset-mem/` (`tools/test-check-bset-mem.sh`). On `bitops.c` it flags `setbit_char` in
 the unpatched compiler's output and nothing with the first patch. Over the
 test cases, `compat/*.c` and two probes at `-O1`, `-O2`, `-Os` and `-O3` it
 flags 36 sites at `-O2` with the unpatched compiler, 19 with the first patch

@@ -72,7 +72,9 @@ produces a **working binary that behaves wrongly** rather than a build error:
   `build-cross.sh` applies the patches in number order to a fresh tree and
   rebuilds GCC when one changes (`.gcc-inputs.sha256`).
   `tools/check-bset-mem.py` flags both forms in objects or `-S` output;
-  `tests/kernel-codegen/byteclr.c` runs them.
+  `tests/kernel-codegen/byteclr.c` runs them. A scan that decodes nothing
+  must fail, never pass: a change to how it finds code or skips switch
+  tables gets a case in `tests/check-bset-mem/` (`tools/test-check-bset-mem.sh`).
 - **A shared library takes what `libc.so.1` lacks from `libamixrt.so.1`.**
   AMIX has `gettimeofday`, `select` and others only as non-PIC static members
   of `usr/ccs/lib/libc.so`; `libamixrt` holds our own PIC versions plus

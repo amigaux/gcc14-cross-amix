@@ -57,27 +57,33 @@ GCC 16.2.0 without `0008` assumed the full number, so
 change bit `n & 7` where C changes nothing; with that patch alone,
 `*p &= ~(1 << n)` becomes a `bfclr` that writes the byte before `*p`, which
 `gcc-0002-bitfield-mem-offset-guard.patch` (GCC 16: `0010`) removes.
-`docs/TOOLCHAIN.md`, "GCC carries two patches", has the details. The scan finds that code after the fact, in
-anything a build produces, and is meant to be run as a gate:
+`docs/TOOLCHAIN.md`, "GCC carries two patches", has the details. The scan
+finds that code after the fact, in anything a build produces, and is meant
+to be run as a gate:
 
-    tools/check-bset-mem.py [--objdump PATH] [--allow FUNC]... [-q] FILE|DIR ...
+    tools/check-bset-mem.py [--objdump PATH] [--allow FUNC]... [--no-code-ok] [-q] FILE|DIR ...
 
 | Input | How |
 |---|---|
 | `foo.s` from `gcc -S` | read as GCC prints it (Motorola syntax with `%`) |
 | `foo.o`, `libfoo.a`, a program, a `.so` | disassembled with an m68k objdump: `--objdump`, `$OBJDUMP`, `config.sh`'s `TC_PREFIX`, `build/prefix`, then `m68k-elf-objdump` on `PATH` |
 | `foo.dis` (`objdump -d` output) | read as it is |
-| a directory | every `*.s`, `*.o`, `*.a`, `*.so*`, `*.dis` under it |
+| a directory | every `*.s`, `*.o`, `*.a`, `*.so*`, `*.dis` under it, and every other ELF file or archive (programs have no suffix) |
 
 It exits 0 when nothing is flagged, 1 when something is (each site with file,
 address or line, function, instruction and reason), and 2 when an input cannot
-be read or is not one of the above -- never a clean verdict for something it
-did not understand. It flags:
+be read, is not one of the above, or yields no decoded instruction -- never a
+clean verdict for something it did not understand. A file with no code at all
+(a data-only object such as the kit's `sunfont.o`, a symbol file) is exit 2
+too, unless `--no-code-ok` is given; then it passes when its ELF section
+headers show no executable bytes. Every section `objdump -d` disassembles is
+taken as code, whatever its name. It flags:
 
 - `bset`, `bclr` or `btst` with `%dN` as the bit number and a memory operand,
   unless `%dN` is shown to be 0..7 within the basic block (`moveq #k`,
   `and.l` with a non-negative constant or a register holding one, `clr.l`,
-  copies, sums and differences of known values);
+  copies, sums and differences of known values, `bfextu` of a constant width,
+  and `and.b`/`and.w #m`, which bounds the low bits the instruction reads);
 - a bit-field instruction (`bfclr`, `bfset`, `bfchg`, `bfins`, `bftst`,
   `bfextu`, `bfexts`, `bfffo`) on memory whose offset register was computed as
   `7 - x` with `x` not shown below 8: the form the first patch leaves, see
@@ -85,12 +91,27 @@ did not understand. It flags:
 
 A finding is a site the scan cannot prove safe, not proof of a fault: a number
 masked in another basic block is not seen. Name a function that has been read
-and found right with `--allow FUNC`. objdump decodes GCC's switch tables in
-`.text` as instructions; the scan skips each table (length from the bounds
-check before the `jmp`) and decodes again from the first real instruction when
-objdump ran the table into it, so nothing real is hidden. Over the same C
+and found right with `--allow FUNC`.
+
+objdump decodes switch tables in `.text` as instructions. The scan skips each
+table: it starts at the base the `jmp %pc@(T,%Xn:w)` names (any data or
+address register, `%fp` and `%sp` included, `T` with or without symbols);
+words between the `jmp` and `T` are a count prefix, `4afc N` (the SVR4
+compiler's swbeg) or `0000 N` (GCC 2.7.2.3), giving N entries. Without a
+prefix the length comes from the bounds check, the compare before the last
+unsigned branch before the `jmp` (`cmpi`/`cmpa #N`, or `cmp` with a register
+loaded with N, read unsigned at the compare's size; a signed branch is a lower
+bound and is passed over); without either, the table ends at the first word
+that is not an even address in the function or at the first case. Where
+objdump ran the table into the first real instruction, the scan decodes again
+from there, so nothing real is hidden. Data in `.text` that is not a switch
+table can still decode as a bit instruction and be flagged. Over the same C
 compiled to `.s` and to `.o` (this set, `compat/*.c` and a switch-heavy probe,
 at `-O1`, `-O2`, `-O3` and `-Os`, both compilers) it flags the same sites.
+
+Each way the scan has gone wrong on real binaries has a regression case in
+`tests/check-bset-mem/` (its README lists them); run them with
+`tools/test-check-bset-mem.sh`.
 
 `tools/test-kernel-codegen.sh` runs it over each compiler's case objects as
 step 4. On `bitops.c` (2026-11-18):
