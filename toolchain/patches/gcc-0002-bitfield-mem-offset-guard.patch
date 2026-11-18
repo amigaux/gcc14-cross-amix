@@ -1,0 +1,79 @@
+m68k: memory bit-field patterns take only a constant, non-negative offset.
+
+Author: gcc14-cross-amix contributors
+Origin: local, not from GCC; written for this toolchain on 2026-11-18
+Upstream: not reported yet.  Follows GCC PR target/126121.
+Licence: GPL-3.0-or-later, as the GCC sources it changes.
+Base: GCC 14.2.0 with gcc-0001-bset-bclr-mem-bit-number.patch.
+
+What it guards: *insv_bfclr_mem, *insv_bfset_mem, *insv_bfchg_mem and
+*insv_bfins_mem, the bit-field writes to a memory operand.
+
+Why: combine's make_field_assignment turns "*p &= ~(1 << n)" on a byte
+(an AND of the byte with the low part of an SImode rotate of -2) into
+(set (zero_extract (mem:QI p) 1 (minus 7 n)) 0) without knowing n < 8.
+For n of 8 to 31 C changes nothing, but BFCLR's offset is signed and
+7 - n is negative, so it clears a bit in the byte before *p.  Before the
+PR 126121 fix the bclrmemqi pattern took this RTL and changed bit n & 7
+of *p instead; with the fix it falls through to *insv_bfclr_mem.  After
+combine has split 7 - n into its own insn the offset is a register whose
+range the pattern cannot see, so a register offset is refused outright,
+as is a negative constant.  The byte is then updated with and/or/xor.
+No C bit-field produces a register offset; the runtime libraries hold
+no memory bit-field instruction with one.
+
+diff -u a/gcc/config/m68k/m68k.md b/gcc/config/m68k/m68k.md
+--- a/gcc/config/m68k/m68k.md
++++ b/gcc/config/m68k/m68k.md
+@@ -5630,6 +5630,13 @@
+   return "bfextu %1{%b3:%b2},%0";
+ })
+ 
++;; A bit-field instruction on memory takes a signed offset that may leave the
++;; byte, and the middle end builds (zero_extract (mem:QI) 1 (minus 7 n)) for
++;; "*p &= ~(1 << n)" on a byte without knowing that n is below 8: for n = 10
++;; that is offset -3, a bit in the byte before *p, where C changes nothing.
++;; A register offset cannot be shown to be in range here, so these patterns
++;; take only a constant, non-negative offset; other forms stay as ordinary
++;; and/or/xor code.  (The bset/bclr memory patterns above model "n & 7".)
+ (define_insn "*insv_bfchg_mem"
+   [(set (zero_extract:SI (match_operand:QI 0 "memory_operand" "+o")
+ 			 (match_operand:SI 1 "nonmemory_operand" "dn")
+@@ -5637,6 +5644,7 @@
+         (xor:SI (zero_extract:SI (match_dup 0) (match_dup 1) (match_dup 2))
+ 		(match_operand 3 "const_int_operand" "n")))]
+   "TARGET_68020 && TARGET_BITFIELD
++   && CONST_INT_P (operands[2]) && INTVAL (operands[2]) >= 0
+    && (INTVAL (operands[3]) == -1
+        || (GET_CODE (operands[1]) == CONST_INT
+            && (~ INTVAL (operands[3]) & ((1 << INTVAL (operands[1]))- 1)) == 0))"
+@@ -5649,7 +5657,8 @@
+ 			 (match_operand:SI 1 "nonmemory_operand" "dn")
+ 			 (match_operand:SI 2 "nonmemory_operand" "dn"))
+ 	(const_int 0))]
+-  "TARGET_68020 && TARGET_BITFIELD"
++  "TARGET_68020 && TARGET_BITFIELD
++   && CONST_INT_P (operands[2]) && INTVAL (operands[2]) >= 0"
+ {
+   return "bfclr %0{%b2:%b1}";
+ })
+@@ -5659,7 +5668,8 @@
+ 			 (match_operand:SI 1 "general_operand" "dn")
+ 			 (match_operand:SI 2 "general_operand" "dn"))
+ 	(const_int -1))]
+-  "TARGET_68020 && TARGET_BITFIELD"
++  "TARGET_68020 && TARGET_BITFIELD
++   && CONST_INT_P (operands[2]) && INTVAL (operands[2]) >= 0"
+ {
+   return "bfset %0{%b2:%b1}";
+ })
+@@ -5688,7 +5698,8 @@
+ 			 (match_operand:SI 1 "nonmemory_operand" "dn")
+ 			 (match_operand:SI 2 "nonmemory_operand" "dn"))
+ 	(match_operand:SI 3 "register_operand" "d"))]
+-  "TARGET_68020 && TARGET_BITFIELD"
++  "TARGET_68020 && TARGET_BITFIELD
++   && CONST_INT_P (operands[2]) && INTVAL (operands[2]) >= 0"
+   "bfins %3,%0{%b2:%b1}")
+ 
+ ;; Now recognize bit-field insns that operate on registers

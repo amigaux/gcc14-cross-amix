@@ -115,12 +115,18 @@ fi
 # wrong for every caller the new one compiles.  A compiler from before a patch
 # is rebuilt for the same reason: the patch changes the code it generates.
 #
-# toolchain/patches/gcc-*.patch are applied to the release, in name order.
-# gcc-bset-bclr-mem-bit-number.patch: GCC PR target/126121.  bset/bclr on a
-# memory byte use only the low 3 bits of a register bit number, and GCC
+# toolchain/patches/gcc-*.patch are applied to the release, in name order
+# (numbered, so the order does not depend on the locale).
+# gcc-0001-bset-bclr-mem-bit-number.patch: GCC PR target/126121.  bset/bclr
+# on a memory byte use only the low 3 bits of a register bit number, and GCC
 # modelled the full number, so `*p |= (char) (1 << n)` with n >= 8 set bit
-# n & 7 instead of nothing.  See docs/TOOLCHAIN.md, "GCC patches", and
-# tools/check-bset-mem.py, which finds the pattern in code built without it.
+# n & 7 instead of nothing.
+# gcc-0002-bitfield-mem-offset-guard.patch: with 0001, `*p &= ~(1 << n)` on
+# a byte fell to bfclr at offset 7 - n, which for n >= 8 clears a bit in the
+# byte before *p; the memory bit-field patterns now take only a constant,
+# non-negative offset.  Ours, not upstream's.
+# See docs/TOOLCHAIN.md, "GCC carries two patches", and
+# tools/check-bset-mem.py, which finds both forms in code built without them.
 GCC_STAMP="$TC_PREFIX/.gcc-inputs.sha256"
 GCC_SUM=$(cat "$REPO/toolchain/amix-abi.h" "$REPO"/toolchain/patches/gcc-*.patch | sha256sum | cut -d' ' -f1)
 if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ] || [ "$(cat "$GCC_STAMP" 2>/dev/null)" != "$GCC_SUM" ]; then

@@ -15,8 +15,9 @@
 # ------------
 # The GNU release gcc-16.2.0, signature-checked once and pinned by sha256
 # below, plus the m68k back-end fixes in toolchain/patches-gcc16/: seven
-# from the AmigaPorts amiga16.2 branch, one from GCC master and one generic
-# pass fix found on that branch.  docs/GCC16.md says why this and not the
+# from the AmigaPorts amiga16.2 branch, one from GCC master, one generic
+# pass fix found on that branch, and one of our own (0010, the memory
+# bit-field offset guard that goes with 0008).  docs/GCC16.md says why this and not the
 # AmigaPorts branch itself (which does not link a cc1 for m68k-elf), and
 # which of the branch's changes were taken, left out, and why.
 #
