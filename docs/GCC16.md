@@ -13,7 +13,7 @@ build/gcc16/prefix/bin/m68k-elf-gcc --version
 tools/test-kernel-codegen.sh    # the test set, under GCC 14 and GCC 16
 ```
 
-**Route taken:** the signed GNU release GCC 16.2.0 with nine m68k fixes
+**Route taken:** the signed GNU release GCC 16.2.0 with ten m68k fixes
 (`toolchain/patches-gcc16/`), seven of them from the AmigaPorts `amiga16.2`
 branch, rather than that branch itself. The branch does not build a compiler
 for `m68k-elf` as it stands, and most of what it changes in the shared m68k
@@ -123,7 +123,8 @@ through the test set for comparison; its results are below.
 
 ## The decision
 
-GCC 16.2.0 from ftp.gnu.org, plus nine patches. Reasons:
+GCC 16.2.0 from ftp.gnu.org, plus nine patches (a tenth, 0010, was added
+later; see "The patches"). Reasons:
 
 1. **The branch is an AmigaOS port.** Using it for `m68k-elf` means carrying
    our own ELF port of it (the build fix, a libgcc fix, and whatever the next
@@ -153,7 +154,8 @@ trial compiler interoperated with GCC 14 and GCC 16 in both directions.
 In `toolchain/patches-gcc16/`, applied in order to the release tree by
 `build-gcc16.sh`. Each has a header naming its author, origin commit and
 upstream status; testsuite files are left out. All apply cleanly (no offset,
-no fuzz) to 16.2.0; 0005 and 0007 needed rebasing by hand.
+no fuzz) to 16.2.0; 0005 and 0007 needed rebasing by hand. 0010 is ours,
+made against 16.2.0 with 0001-0009.
 
 | # | Fixes | Origin | Kernel relevance |
 |---|---|---|---|
@@ -166,6 +168,7 @@ no fuzz) to 16.2.0; 0005 and 0007 needed rebasing by hand.
 | 0007 | SImode `dbra` loops ended at the first borrow when the count was above 2^31; HImode counters in an address register compared all 32 bits | AmigaPorts `f831bb9945` | counted loops |
 | 0008 | `bset`/`bclr` on memory use only the low 3 bits of the bit number; GCC modelled the full number (GCC PR 126121) | GCC master `b407be9e4b`, Andreas Schwab; not on `releases/gcc-16` or the AmigaPorts branch | bit flags in memory |
 | 0009 | `fold-mem-offsets` folded an offset into the wrong operand of a memory-to-memory move | AmigaPorts `1e6714c8f3` | `-O2` |
+| 0010 | with 0008, `*p &= ~(1 << n)` on a byte fell to `bfclr` at offset `7 - n`, which for `n` >= 8 clears a bit in the byte before `*p`; the memory bit-field writes now take only a constant, non-negative offset | ours, 2026-11-18; not reported upstream | bit flags in memory |
 
 Considered and left out:
 
@@ -236,7 +239,7 @@ The six failures are one case, `bitops`, whenever GCC 14 compiled the callee:
 GCC 14 emits `bset %d0,(%a0)`, which sets bit 2. That is GCC PR 126121,
 present in GCC 14.2.0 and in the AmigaPorts branch, fixed here by patch 0008.
 (The GCC 14 build has carried the same fix since 2026-11-18,
-`toolchain/patches/gcc-bset-bclr-mem-bit-number.patch`; with it the six runs
+`toolchain/patches/gcc-0001-bset-bclr-mem-bit-number.patch`; with it the six runs
 pass. The results above are from the unpatched GCC 14.)
 The other five run cases pass in all four combinations on all three CPUs,
 which shows both compilers agree on the calling convention for everything the
@@ -266,21 +269,31 @@ GCC 16 now folds the load, operation and store into one memory instruction,
 and m68k's `output_iorsi3`/`output_andsi3`/`output_xorsi3` then narrow a
 memory operand to the byte or word that changes — a 32-bit device register is
 read and written with an 8- or 16-bit access. The narrowing code is
-upstream's and none of the nine patches touches it; the AmigaPorts trial
+upstream's and none of the ten patches touches it; the AmigaPorts trial
 compiler does the same. For a register that must be accessed 32 bits wide
 this is a real change. Options: access such registers through explicit
 accessors (inline asm or a `move.l` helper), or a small back-end patch that
 skips the narrowing when the memory operand is volatile. Not decided here.
 
-**PR 126121 is fixed only for BSET/BCLR.** Measured 2026-11-18 (qemu, 68030,
-68040, 68060): with 0008, `*p &= ~(1 << n)` on a byte, unmasked, compiles to
-`moveq #7,%d0; sub.l n,%d0; bfclr (%a0){%d0:#1}`, and for `n` = 10 the offset
-is -3, so it clears bit 2 of the byte before `*p` -- a write outside the
-object, where the unpatched compiler cleared bit 2 of `*p` itself. GCC 14.2.0
-with the same fix does the same. The bit-field RTL is built by the middle end
-at position 7 - n without bounding `n`; not fixed here and not reported
-upstream. `tools/check-bset-mem.py` flags the form; `docs/TOOLCHAIN.md`, "GCC
-carries one patch", has the details.
+**0008 fixes PR 126121 only for BSET/BCLR; 0010 covers the rest.** Measured
+2026-11-18 (qemu, 68030, 68040, 68060): with 0008 alone, `*p &= ~(1 << n)` on
+a byte, unmasked, compiles to `moveq #7,%d0; sub.l n,%d0; bfclr
+(%a0){%d0:#1}`, and for `n` = 10 the offset is -3, so it clears bit 2 of the
+byte before `*p` -- a write outside the object, where the unpatched compiler
+cleared bit 2 of `*p` itself. GCC 14.2.0 with the same fix does the same.
+Combine's `make_field_assignment` builds that bit-field RTL at position
+7 - n without bounding `n`. 0010 guards the m68k memory bit-field write
+patterns (`*insv_bfclr_mem`, `*insv_bfset_mem`, `*insv_bfchg_mem`,
+`*insv_bfins_mem`) to constant, non-negative offsets, and the byte is then
+updated with `and.b`; the GCC 14 build carries the same guard. The test
+set's `byteclr` case shows it: with 0008 alone it fails on all three CPUs
+(8 wrong results: both clears for `n` = 8, 10, 15, 30), with 0010 it passes.
+Built into `build/gcc16/prefix-bfguard`, libgcc and crt objects are
+instruction for instruction those of the build without 0010; in the test
+set only `clrbit_char` (7 to 8 instructions) and `byteclr`'s `clr_byte`,
+`clr_byte_u8` and `clr_bitmap` change. Upstream has not been told yet.
+`tools/check-bset-mem.py` flags the form in code built without the guard;
+`docs/TOOLCHAIN.md`, "GCC carries two patches", has the details.
 
 ### The AmigaPorts trial, for comparison
 
@@ -326,4 +339,5 @@ structret 204, and it does use `dbra` for `fill` and `count_until`.
   upstream-relevant fixes.
 - Whether the volatile narrowing above affects any register the AMIX kernel
   touches; that is for the kernel's own build to check.
-- A fix for the `bfclr` at `7 - n` that PR 126121's fix leaves (above).
+- Whether upstream wants 0010's guard or a fix in combine; neither the
+  fault nor the guard has been reported yet.

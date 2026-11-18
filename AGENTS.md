@@ -62,14 +62,17 @@ produces a **working binary that behaves wrongly** rather than a build error:
   exported data cannot follow an executable's `R_68K_COPY` of it. A shared
   xterm crashes on libXt's class records. `build-cross.sh` rebuilds binutils
   when the patches change; `tools/test-pic-globals.sh` checks the result.
-- **GCC carries one patch: `toolchain/patches/gcc-*.patch`.** GCC PR
+- **GCC carries two patches: `toolchain/patches/gcc-*.patch`.** GCC PR
   target/126121: `bset`/`bclr %dN,<mem>` use `%dN & 7` and unpatched GCC
-  assumed all of `%dN`, so a bit number of 8 or more changed the wrong bit.
-  `build-cross.sh` applies the patches to a fresh tree and rebuilds GCC when
-  one changes (`.gcc-inputs.sha256`). With the fix, `*p &= ~(1 << n)` on a
-  byte becomes a `bfclr` at offset `7 - n` that reaches the byte before for
-  `n` >= 8 -- not fixed. `tools/check-bset-mem.py` flags both forms in
-  objects or `-S` output.
+  assumed all of `%dN`, so a bit number of 8 or more changed the wrong bit
+  (0001, upstream's). With that alone, `*p &= ~(1 << n)` on a byte becomes
+  a `bfclr` at offset `7 - n` that reaches the byte before for `n` >= 8;
+  0002 (ours, not reported upstream) lets the memory bit-field patterns
+  take only constant offsets. GCC 16 carries both as 0008 and 0010.
+  `build-cross.sh` applies the patches in number order to a fresh tree and
+  rebuilds GCC when one changes (`.gcc-inputs.sha256`).
+  `tools/check-bset-mem.py` flags both forms in objects or `-S` output;
+  `tests/kernel-codegen/byteclr.c` runs them.
 - **A shared library takes what `libc.so.1` lacks from `libamixrt.so.1`.**
   AMIX has `gettimeofday`, `select` and others only as non-PIC static members
   of `usr/ccs/lib/libc.so`; `libamixrt` holds our own PIC versions plus
