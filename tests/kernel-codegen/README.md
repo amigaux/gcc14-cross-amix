@@ -6,13 +6,20 @@ kind of C: GCC 14 (`toolchain/build-cross.sh`) and GCC 16
 
     tools/test-kernel-codegen.sh
 
+or name the compilers, the first two being the pair whose code is diffed:
+
+    tools/test-kernel-codegen.sh gcc14=build/prefix/bin/m68k-elf-gcc \
+        gcc14p=build/prefix-pr126121/bin/m68k-elf-gcc \
+        gcc16=build/gcc16/prefix/bin/m68k-elf-gcc
+
 Every case is compiled by each compiler with the same flags (`-O2 -m68020-60
 -msoft-float -ffreestanding -fno-common -std=gnu99`; set `CFLAGS` to change
-them), disassembled, and diffed between the compilers. The cases that can run
-are then linked four ways -- each compiler's callees with each compiler's
-callers -- and run under `qemu-m68k` user emulation on a 68030, a 68040 and a
-68060, which checks results and the calling convention across the two
-compilers at once. Output goes to `build/gcc16/codegen/`.
+them), disassembled, scanned for the GCC PR 126121 pattern
+(`tools/check-bset-mem.py`, below), and diffed between the compilers. The
+cases that can run are then linked four ways -- each compiler's callees with
+each compiler's callers -- and run under `qemu-m68k` user emulation on a
+68030, a 68040 and a 68060, which checks results and the calling convention
+across the compilers at once. Output goes to `build/gcc16/codegen/`.
 
 | File | What it holds | Run |
 |---|---|---|
@@ -31,3 +38,67 @@ lacks (measured with qemu 10.2.1: `divu.l %d2,%d0:%d1` runs on its 68030 and
 68040 and is an illegal instruction on its 68060), so the 68060 run also
 covers the libgcc helpers the cases call. The C objects are in addition
 checked from their encodings with `tools/check-68060-safe.py`.
+
+## The PR 126121 scan: `tools/check-bset-mem.py`
+
+BSET and BCLR with the bit number in a register and a memory operand use only
+its low three bits; GCC 14.2.0 without
+`toolchain/patches/gcc-bset-bclr-mem-bit-number.patch` (the 1.1 compiler) and
+GCC 16.2.0 without `0008` assumed the full number, so
+`*p |= (unsigned char) (1 << n)` and `*p &= ~(1 << n)` with `n` of 8 or more
+change bit `n & 7` where C changes nothing. `docs/TOOLCHAIN.md`, "GCC carries
+one patch", has the details. The scan finds that code after the fact, in
+anything a build produces, and is meant to be run as a gate:
+
+    tools/check-bset-mem.py [--objdump PATH] [--allow FUNC]... [-q] FILE|DIR ...
+
+| Input | How |
+|---|---|
+| `foo.s` from `gcc -S` | read as GCC prints it (Motorola syntax with `%`) |
+| `foo.o`, `libfoo.a`, a program, a `.so` | disassembled with an m68k objdump: `--objdump`, `$OBJDUMP`, `config.sh`'s `TC_PREFIX`, `build/prefix`, then `m68k-elf-objdump` on `PATH` |
+| `foo.dis` (`objdump -d` output) | read as it is |
+| a directory | every `*.s`, `*.o`, `*.a`, `*.so*`, `*.dis` under it |
+
+It exits 0 when nothing is flagged, 1 when something is (each site with file,
+address or line, function, instruction and reason), and 2 when an input cannot
+be read or is not one of the above -- never a clean verdict for something it
+did not understand. It flags:
+
+- `bset`, `bclr` or `btst` with `%dN` as the bit number and a memory operand,
+  unless `%dN` is shown to be 0..7 within the basic block (`moveq #k`,
+  `and.l` with a non-negative constant or a register holding one, `clr.l`,
+  copies, sums and differences of known values);
+- a bit-field instruction (`bfclr`, `bfset`, `bfchg`, `bfins`, `bftst`,
+  `bfextu`, `bfexts`, `bfffo`) on memory whose offset register was computed as
+  `7 - x` with `x` not shown below 8: the form the patch leaves, see below.
+
+A finding is a site the scan cannot prove safe, not proof of a fault: a number
+masked in another basic block is not seen. Name a function that has been read
+and found right with `--allow FUNC`. objdump decodes GCC's switch tables in
+`.text` as instructions; the scan skips each table (length from the bounds
+check before the `jmp`) and decodes again from the first real instruction when
+objdump ran the table into it, so nothing real is hidden. Over the same C
+compiled to `.s` and to `.o` (this set, `compat/*.c` and a switch-heavy probe,
+at `-O1`, `-O2`, `-O3` and `-Os`, both compilers) it flags the same sites.
+
+`tools/test-kernel-codegen.sh` runs it over each compiler's case objects as
+step 4. On `bitops.c` (2026-11-18):
+
+| Compiler | `bitops.s` | `bitops.o` |
+|---|---|---|
+| GCC 14.2.0 unpatched (`build/prefix`, the 1.1 compiler) | exit 1: `setbit_char`, `bset %d0,(%a0)` | exit 1: `setbit_char` 0x8, `bset %d0,%a0@` |
+| GCC 14.2.0 with the patch (`build/prefix-pr126121`) | exit 0 | exit 0 |
+| GCC 16.2.0 with 0008 | exit 0 | exit 0 |
+
+`clrbit_char` is not flagged under the unpatched compiler: its `bclr` follows
+`moveq #7,%d0; and.l 8(%sp),%d0`, so the number is below 8 and the code is
+right.
+
+**The form the patch leaves.** `*p &= ~(1 << n)` on a byte, with the patch,
+is compiled to `moveq #7,%d0; sub.l n,%d0; bfclr (%a0){%d0:#1}`; for `n` of 8
+or more the offset is negative and BFCLR clears a bit in the byte before `*p`.
+Measured under qemu (68030, 68040, 68060) with patched GCC 14.2.0 and with
+GCC 16.2.0: three bytes `ff ff ff`, the middle one as `*p`, `n` = 10, become
+`fb ff ff`; C says `ff ff ff`, and the unpatched compiler gives `ff fb ff`.
+None of the cases here has that form (`clrbit_char` masks with `& 7`), so the
+run passes with the patched compilers; the scan flags it wherever it appears.

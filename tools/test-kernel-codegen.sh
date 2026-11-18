@@ -16,7 +16,10 @@
 #     68040/060-only FPU form (tools/check-68060-safe.py --68881);
 #  3. the supervisor files disassemble to the instructions they were written
 #     with (pmove, ptest, pflush, movec, cinv, cpush, move16, plpa);
-#  4. the run cases are linked four ways -- callees from each compiler with
+#  4. no object holds a bset/bclr with a register bit number on memory that
+#     is not shown to be below 8, nor the bit-field form at offset 7 - n
+#     (GCC PR 126121; tools/check-bset-mem.py);
+#  5. the run cases are linked four ways -- callees from each compiler with
 #     callers from each -- and run on a 68030, a 68040 and a 68060 in
 #     qemu-m68k; a wrong result or a calling-convention mismatch fails.
 #     qemu's 68060 traps the 64-bit MULU.L/DIVU.L as the real one does
@@ -76,7 +79,7 @@ for i in "${!NAMES[@]}"; do
 	say "  $("${CCS[$i]}" --version | head -1)"
 done
 
-# ---- 1-3: compile, assemble, 68060 check, supervisor mnemonics ----------
+# ---- 1-4: compile, assemble, 68060 check, mnemonics, PR 126121 ---------
 for i in "${!NAMES[@]}"; do
 	n=${NAMES[$i]} cc=${CCS[$i]} d="$OUT/${NAMES[$i]}"
 	mkdir -p "$d"
@@ -122,12 +125,19 @@ for i in "${!NAMES[@]}"; do
 	done
 	if [ -z "$miss" ]; then say "ok   $n: supervisor instructions disassemble as written"
 	else fail "$n: missing from the disassembly:$miss"; fi
+	if python3 "$REPO/tools/check-bset-mem.py" --objdump "$objdump" \
+		$(for c in $CC_CASES; do echo "$d/$c.o"; done) > "$d/check-bset-mem.txt" 2>&1; then
+		say "ok   $n: no PR 126121 bit-number pattern in the cases (check-bset-mem.py)"
+	else
+		fail "$n: PR 126121 bit-number pattern (see $d/check-bset-mem.txt)"
+		grep -v '^check-bset-mem.py: seen' "$d/check-bset-mem.txt" | sed 's/^/    /' | head -20 | tee -a "$SUMMARY"
+	fi
 	"$(tool "$cc" nm)" -u $(for c in $RUN_CASES kasm; do echo "$d/$c.o"; done) 2>/dev/null \
 		| awk '/ U / {print $2}' | sort -u > "$d/libcalls.txt"
 	say "     $n: external calls from the cases: $(tr '\n' ' ' < "$d/libcalls.txt")"
 done
 
-# ---- 4: run, four ways --------------------------------------------------
+# ---- 5: run, four ways --------------------------------------------------
 if [ -z "$QEMU" ]; then
 	say "skip run: no qemu-m68k on this host"
 else
