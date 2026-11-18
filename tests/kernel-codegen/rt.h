@@ -25,4 +25,5 @@ int manyargs_check (void);
 int inlineasm_check (void);
 int bitops_check (void);
 int loops_check (void);
+int byteclr_check (void);
 #endif

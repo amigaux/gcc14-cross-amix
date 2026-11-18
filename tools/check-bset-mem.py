@@ -11,21 +11,23 @@ full number, so for C whose result is defined for any shift below 32 --
     *p &= ~(1 << n);                     n = 10: the low byte is 0xff, no change
 
 -- it emitted a bare `bset`/`bclr %dN,<mem>` that changes bit n & 7 instead.
-The fix (toolchain/patches/gcc-bset-bclr-mem-bit-number.patch, upstream GCC
+The fix (toolchain/patches/gcc-0001-bset-bclr-mem-bit-number.patch, upstream GCC
 commit b407be9e4b) makes the patterns say "bit number & 7", so GCC uses
 them only when the number is known to be below 8 -- after an explicit `& 7`
 in the source, which it then leaves out because the instruction does it.
 
-ONE FORM THE FIX DOES NOT COVER
-With the fix, `*p &= ~(1 << n)` on a byte no longer matches BCLR and falls
-to the bit-field instruction instead: `moveq #7,%d0; sub.l n,%d0;
-bfclr (%a0){%d0:#1}`.  BFCLR takes a signed bit offset that may leave the
-byte, so with n = 10 the offset is -3 and it clears bit 2 of the byte BEFORE
-*p -- a write outside the object (measured under qemu on a 68030, 68040
-and 68060 with GCC 14.2.0 and GCC 16.2.0, both with the fix; see
-docs/TOOLCHAIN.md, "GCC carries one patch").  The middle end builds that
-bit-field RTL at position 7 - n without bounding n; the m68k fix only stops
-BCLR from standing in for it.  This tool flags that form as well.
+ONE FORM THAT FIX DOES NOT COVER
+With that fix alone, `*p &= ~(1 << n)` on a byte no longer matches BCLR
+and falls to the bit-field instruction instead: `moveq #7,%d0; sub.l
+n,%d0; bfclr (%a0){%d0:#1}`.  BFCLR takes a signed bit offset that may leave
+the byte, so with n = 10 the offset is -3 and it clears bit 2 of the byte
+BEFORE *p -- a write outside the object (measured under qemu on a 68030,
+68040 and 68060 with GCC 14.2.0 and GCC 16.2.0).  Combine builds that
+bit-field RTL at position 7 - n without bounding n.  The second patch
+(toolchain/patches/gcc-0002-bitfield-mem-offset-guard.patch, GCC 16's
+0010) lets the memory bit-field patterns take only a constant offset; code
+from a compiler without it is flagged here.  See docs/TOOLCHAIN.md, "GCC
+carries two patches".
 
 WHAT IS FLAGGED
   bset/bclr  %dN,<memory>             %dN not shown to be 0..7
@@ -323,8 +325,8 @@ def check(mn, ops, w):
             m = DREG.match(off or "")
             if m and w.r.get(int(m.group(1))) == Walker.SEVEN_MINUS:
                 return ("%s on memory at offset 7 - x with x not shown below 8: "
-                        "for x >= 8 it reaches the byte before (PR 126121, the "
-                        "form the m68k fix leaves)" % mn)
+                        "for x >= 8 it reaches the byte before (PR 126121 with "
+                        "the bset/bclr fix but not the bit-field guard)" % mn)
     return None
 
 

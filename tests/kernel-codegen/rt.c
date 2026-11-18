@@ -88,6 +88,7 @@ main (void)
   run ("inlineasm", inlineasm_check);
   run ("bitops", bitops_check);
   run ("loops", loops_check);
+  run ("byteclr", byteclr_check);
   put (failures ? "FAILED\n" : "all cases passed\n");
   return failures != 0;
 }

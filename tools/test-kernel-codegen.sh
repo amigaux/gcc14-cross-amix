@@ -47,7 +47,7 @@ for a in "$@"; do
 done
 [ ${#NAMES[@]} -ge 2 ] || { echo "test-kernel-codegen.sh: name two compilers" >&2; exit 1; }
 
-RUN_CASES="muldiv64 structret manyargs inlineasm bitops loops"
+RUN_CASES="muldiv64 structret manyargs inlineasm bitops loops byteclr"
 CC_CASES="$RUN_CASES kasm"
 QEMU=$(command -v qemu-m68k || true)
 FAILS=0
