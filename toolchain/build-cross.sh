@@ -74,9 +74,15 @@ fetch() {  # $1 = url, $2 = filename
 # -fPIC code, so a shared library's pointer to its own exported object could
 # not be redirected to an executable's R_68K_COPY of it.  See docs/TOOLCHAIN.md,
 # "A library's pointers to its own exported data".
+# binutils-dynstr-needed-first.patch: ld puts DT_NEEDED, DT_SONAME and DT_RPATH
+# names at the start of .dynstr, where AMIX's own ld puts them.  The runtime
+# linker reads a dependency's NEEDED offsets in another object's string table
+# when dlopen loads it; names at the end run past that table.  See
+# docs/TOOLCHAIN.md, "Library names first in .dynstr".
 #
 # Done means built with the current patches: a prefix whose binutils predate a
-# patch is rebuilt, as the compiler is for amix-abi.h below.
+# patch is rebuilt, as the compiler is for amix-abi.h below.  libamixrt.so.1 is
+# relinked by the new ld further down.
 BINUTILS_STAMP="$TC_PREFIX/.binutils-patches.sha256"
 BINUTILS_SUM=$(cat "$REPO"/toolchain/patches/binutils-*.patch | sha256sum | cut -d' ' -f1)
 if [ ! -x "$TC_PREFIX/bin/$TARGET-ld" ] || [ "$(cat "$BINUTILS_STAMP" 2>/dev/null)" != "$BINUTILS_SUM" ]; then
@@ -99,6 +105,8 @@ if [ ! -x "$TC_PREFIX/bin/$TARGET-ld" ] || [ "$(cat "$BINUTILS_STAMP" 2>/dev/nul
 	cd "$WORK"
 	# Reclaim the space before GCC needs it.
 	rm -rf "${WORK:?}/build-binutils" "${WORK:?}/binutils-${BINUTILS_VER:?}"
+	# Linked by the previous ld, so it is made again below.
+	rm -f "$TC_PREFIX/$TARGET/lib/amixrt/libamixrt.so.1"
 	echo "$BINUTILS_SUM" > "$BINUTILS_STAMP"
 	echo "== binutils installed"
 fi

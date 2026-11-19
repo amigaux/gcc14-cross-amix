@@ -1,0 +1,191 @@
+--- a/bfd/elf-bfd.h
++++ b/bfd/elf-bfd.h
+@@ -2470,6 +2470,8 @@
+   (struct elf_strtab_hash *, size_t);
+ extern unsigned int _bfd_elf_strtab_refcount
+   (struct elf_strtab_hash *, size_t);
++extern void _bfd_elf_strtab_place_first
++  (struct elf_strtab_hash *, size_t);
+ extern void _bfd_elf_strtab_clear_all_refs
+   (struct elf_strtab_hash *);
+ extern void *_bfd_elf_strtab_save
+--- a/bfd/elflink.c
++++ b/bfd/elflink.c
+@@ -4027,6 +4027,41 @@
+   const struct elf_backend_data *bed;
+   bfd_byte *extdyn;
+ 
++  bed = get_elf_backend_data (dynobj);
++  sdyn = hash_table->dynamic;
++  BFD_ASSERT (sdyn != NULL);
++
++  /* Put the names of libraries and search paths at the start of .dynstr,
++     before every symbol name.  The SVR4 runtime linker in AMIX's
++     /usr/lib/libc.so.1 looks up a dependency's DT_NEEDED offsets in the
++     string table of the first object of the list it is building when
++     dlopen loads a library with dependencies; its own linker puts these
++     names first, so the offsets stay inside that table.  Strings at the
++     end of ours would run past it.  */
++  for (extdyn = sdyn->contents;
++       extdyn < PTR_ADD (sdyn->contents, sdyn->size);
++       extdyn += bed->s->sizeof_dyn)
++    {
++      Elf_Internal_Dyn dyn;
++
++      bed->s->swap_dyn_in (dynobj, extdyn, &dyn);
++      switch (dyn.d_tag)
++	{
++	case DT_NEEDED:
++	case DT_SONAME:
++	case DT_RPATH:
++	case DT_RUNPATH:
++	case DT_FILTER:
++	case DT_AUXILIARY:
++	case DT_AUDIT:
++	case DT_DEPAUDIT:
++	  _bfd_elf_strtab_place_first (dynstr, dyn.d_un.d_val);
++	  break;
++	default:
++	  break;
++	}
++    }
++
+   _bfd_elf_strtab_finalize (dynstr);
+   size = _bfd_elf_strtab_size (dynstr);
+ 
+@@ -4035,10 +4070,6 @@
+   if (info->callbacks->examine_strtab)
+     info->callbacks->examine_strtab (dynstr);
+ 
+-  bed = get_elf_backend_data (dynobj);
+-  sdyn = hash_table->dynamic;
+-  BFD_ASSERT (sdyn != NULL);
+-
+   /* Update all .dynamic entries referencing .dynstr strings.  */
+   for (extdyn = sdyn->contents;
+        extdyn < PTR_ADD (sdyn->contents, sdyn->size);
+--- a/bfd/elf-strtab.c
++++ b/bfd/elf-strtab.c
+@@ -34,6 +34,8 @@
+   /* Length of this entry.  This includes the zero terminator.  */
+   int len;
+   unsigned int refcount;
++  /* Place this string before every string that is not so marked.  */
++  bool first;
+   union {
+     /* Index within the merged section.  */
+     bfd_size_type index;
+@@ -84,6 +86,7 @@
+       ret->u.index = -1;
+       ret->refcount = 0;
+       ret->len = 0;
++      ret->first = false;
+     }
+ 
+   return entry;
+@@ -207,6 +210,20 @@
+   return tab->array[idx]->refcount;
+ }
+ 
++/* Ask for the string at IDX to be placed at the start of the table,
++   before every string not so marked, when the table is finalized.
++   The marked strings keep their order among themselves.  */
++
++void
++_bfd_elf_strtab_place_first (struct elf_strtab_hash *tab, size_t idx)
++{
++  if (idx == 0 || idx == (size_t) -1)
++    return;
++  BFD_ASSERT (tab->sec_size == 0);
++  BFD_ASSERT (idx < tab->size);
++  tab->array[idx]->first = true;
++}
++
+ void
+ _bfd_elf_strtab_clear_all_refs (struct elf_strtab_hash *tab)
+ {
+@@ -315,26 +332,32 @@
+ {
+   bfd_size_type off = 1;
+   size_t i;
++  int pass;
+ 
+   if (bfd_write ("", 1, abfd) != 1)
+     return false;
+ 
+-  for (i = 1; i < tab->size; ++i)
+-    {
+-      register const char *str;
+-      register unsigned int len;
++  /* In the order _bfd_elf_strtab_finalize assigned: the strings marked
++     by _bfd_elf_strtab_place_first, then the rest.  */
++  for (pass = 0; pass < 2; ++pass)
++    for (i = 1; i < tab->size; ++i)
++      {
++	register const char *str;
++	register unsigned int len;
++
++	BFD_ASSERT (tab->array[i]->refcount == 0);
++	if (tab->array[i]->first != (pass == 0))
++	  continue;
++	len = tab->array[i]->len;
++	if ((int) len <= 0)
++	  continue;
++
++	str = tab->array[i]->root.string;
++	if (bfd_write (str, len, abfd) != len)
++	  return false;
+ 
+-      BFD_ASSERT (tab->array[i]->refcount == 0);
+-      len = tab->array[i]->len;
+-      if ((int) len <= 0)
+-	continue;
+-
+-      str = tab->array[i]->root.string;
+-      if (bfd_write (str, len, abfd) != len)
+-	return false;
+-
+-      off += len;
+-    }
++	off += len;
++      }
+ 
+   BFD_ASSERT (off == tab->sec_size);
+   return true;
+@@ -435,7 +458,9 @@
+ 	  struct elf_strtab_hash_entry *cmp = *a;
+ 
+ 	  cmp->len += 1;
+-	  if (is_suffix (e, cmp))
++	  /* A string to be placed first is not made a suffix of one that
++	     is not, since its offset would then follow that string.  */
++	  if (is_suffix (e, cmp) && (e->first || !cmp->first))
+ 	    {
+ 	      cmp->u.suffix = e;
+ 	      cmp->len = -cmp->len;
+@@ -448,12 +473,23 @@
+  alloc_failure:
+   free (array);
+ 
+-  /* Assign positions to the strings we want to keep.  */
++  /* Assign positions to the strings we want to keep: those marked by
++     _bfd_elf_strtab_place_first, then the rest.  _bfd_elf_strtab_emit
++     writes them in the same order.  */
+   sec_size = 1;
+   for (i = 1; i < tab->size; ++i)
+     {
+       e = tab->array[i];
+-      if (e->refcount && e->len > 0)
++      if (e->first && e->refcount && e->len > 0)
++	{
++	  e->u.index = sec_size;
++	  sec_size += e->len;
++	}
++    }
++  for (i = 1; i < tab->size; ++i)
++    {
++      e = tab->array[i];
++      if (!e->first && e->refcount && e->len > 0)
+ 	{
+ 	  e->u.index = sec_size;
+ 	  sec_size += e->len;

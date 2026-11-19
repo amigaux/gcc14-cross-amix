@@ -50,6 +50,16 @@ check() {  # $1 = what, $2 = file holding readelf output, $3 = pattern that must
 check_not() {  # $1 = what, $2 = file, $3 = pattern that must not match
 	if grep -qE -- "$3" "$2"; then fail "$1"; else pass "$1"; fi
 }
+# The runtime linker reads a dependency's NEEDED offsets in another object's
+# string table when dlopen loads it: see tools/check-dynstr-order.py.
+check_dynstr() {  # $1 = file
+	if python3 tools/check-dynstr-order.py "$1" > /dev/null; then
+		pass "library names first in .dynstr"
+	else
+		fail "library names first in .dynstr"
+		python3 tools/check-dynstr-order.py "$1" | sed 's/^/        /'
+	fi
+}
 
 echo "== building"
 "$CC" -O2 -fPIC -shared -Wl,-soname,libsolibc.so.1 -o "$OUT/libsolibc.so.1" probe/solib-c.c
@@ -81,6 +91,7 @@ for lib in libsolibc.so.1 libsolibcxx.so.1; do
 	# A constructor makes .init_array 8 bytes: amix_initS.o's null entry and
 	# the constructor's.
 	check "one constructor in .init_array" "$R" '\(INIT_ARRAYSZ\) +8 \(bytes\)'
+	check_dynstr "$OUT/$lib"
 	rm -f "${R:?}"
 done
 
@@ -98,6 +109,7 @@ for prog in solib-main solib-main-cxx; do
 	check "an executable (ET_EXEC)" "$R" 'Type: +EXEC'
 	check "interpreter /usr/lib/libc.so.1" "$R" 'Requesting program interpreter: /usr/lib/libc.so.1'
 	check "NEEDED libsolibcxx.so.1" "$R" '\(NEEDED\) +Shared library: \[libsolibcxx.so.1\]'
+	check_dynstr "$OUT/$prog"
 	check_not "the program does not NEED libamixrt.so.1: it links its own copies" "$R" \
 		'\(NEEDED\) +Shared library: \[libamixrt\.so\.1\]'
 	LIBS="$(sed -nE 's/.*\(NEEDED\) +Shared library: \[(libsolib[a-z]*\.so\.1)\]/\1/p' "$R") libamixrt.so.1"
