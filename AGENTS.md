@@ -56,12 +56,23 @@ produces a **working binary that behaves wrongly** rather than a build error:
   `-fpcc-struct-return`, the address goes in `%a1`". That was measured on
   Debian's `m68k-linux-gnu` compiler and is wrong for `m68k-elf` — a
   measurement belongs to the compiler it was taken with.
-- **binutils carries one patch: `toolchain/patches/`.** Unpatched m68k-elf
-  gas writes a `-fPIC` relocation against an exported symbol defined in the
-  same file as section+offset, so a shared library's pointer to its own
+- **binutils carries two patches: `toolchain/patches/binutils-*`.** Unpatched
+  m68k-elf gas writes a `-fPIC` relocation against an exported symbol defined
+  in the same file as section+offset, so a shared library's pointer to its own
   exported data cannot follow an executable's `R_68K_COPY` of it. A shared
-  xterm crashes on libXt's class records. `build-cross.sh` rebuilds binutils
-  when the patches change; `tools/test-pic-globals.sh` checks the result.
+  xterm crashes on libXt's class records; `tools/test-pic-globals.sh` checks
+  the fix. Unpatched ld writes the `DT_NEEDED`, `DT_SONAME` and `DT_RPATH`
+  names after every symbol name in `.dynstr`, and AMIX's runtime linker reads
+  a dependency's NEEDED offsets in another object's string table when
+  `dlopen` loads it, so it reads past that table; ld now puts them first, and
+  `tools/check-dynstr-order.py` checks any file (`tools/test-dynstr-order.sh`).
+  `build-cross.sh` rebuilds binutils, and relinks `libamixrt.so.1`, when the
+  patches change.
+- **`sym+N@GOT` is linked to the wrong address, silently.** m68k ld drops the
+  addend of a GOT-offset relocation, so the code gets `sym`, not `sym+N`.
+  GCC 14 has been seen to emit it; `tools/check-got-addend.py` finds it in
+  objects (only there: a linked file no longer shows it). Run it on the PIC
+  objects of anything built shared.
 - **GCC carries two patches: `toolchain/patches/gcc-*.patch`.** GCC PR
   target/126121: `bset`/`bclr %dN,<mem>` use `%dN & 7` and unpatched GCC
   assumed all of `%dN`, so a bit number of 8 or more changed the wrong bit

@@ -1017,7 +1017,8 @@ that does not fix function-address equality: see the paragraph above.
 (`probe/solib-cxx.cpp`). It links two programs against them and checks the
 results with `readelf`: `ET_DYN`, the `SONAME`, no interpreter, `DT_INIT` and
 `DT_FINI`, no text relocations, `DT_NEEDED libamixrt.so.1` and nothing else,
-nothing of the startup code exported, a program that does not NEED
+nothing of the startup code exported, the library names first in `.dynstr`,
+a program that does not NEED
 `libamixrt.so.1` itself, and every undefined symbol defined by the program,
 `libamixrt.so.1` or `libc.so.1`. It stages everything in `build/test-shared/`
 with `run-shared.sh`, to be copied to the machine and run there;
@@ -1249,3 +1250,80 @@ alike, for GCC 14 and GCC 16. Over
 `libamixrt.so.1` from any of the three GCC 14 builds it flags nothing: they hold no
 `bset`/`bclr`/`btst` with a register number on memory at all, and 361
 bit-field instructions on memory, none at a `7 - n` offset.
+
+## Library names first in .dynstr
+
+AMIX's runtime linker is `/usr/lib/libc.so.1`. When `dlopen` opens a library,
+its `dl_makelist` builds the handle's list of objects, the ones `dlsym` will
+search: the library and, through each listed object's `DT_NEEDED` entries,
+the loaded objects it depends on. For each NEEDED entry it takes the offset
+from the object's own dynamic section but the string table from the first
+object of the list (`libc.so.1` text 0xfcde-0xfcea: `movel %a1@(28),%d7`
+with `%a1` the first link map, then `addl %a2@(4),%d7` with `%a2` the current
+dynamic entry), and looks the name up among the loaded objects. The bug is
+independently known to other AMIX shared-library work. AMIX's own 1991 ld
+writes the names of libraries at the start of `.dynstr`, so the offsets are
+small and the read stays inside the first table. GNU ld writes them after
+every symbol name: a dependency's NEEDED offset is then near the end of its
+own table and can lie past the end of the first one, and the lookup reads
+whatever follows it. libnsl's name-to-address code opens `tcpip.so` and
+`straddr.so` with `dlopen`, so any network client of a library stack can get
+there.
+
+Names first make our objects behave as AMIX's own do, no more: the read stays
+in bounds, but the name found there is the first object's, so a dependency's
+dependency can still be missing from the handle's list. Only a fix in
+`libc.so.1` itself makes the list right.
+
+`toolchain/patches/binutils-dynstr-needed-first.patch` makes ld place every
+string named by `DT_NEEDED`, `DT_SONAME`, `DT_RPATH` or `DT_RUNPATH` (and the
+rarer `DT_FILTER`, `DT_AUXILIARY`, `DT_AUDIT`, `DT_DEPAUDIT`) at the start of
+`.dynstr`, in the order ld met them, before every symbol and version name. It
+is done in ld rather than by a tool run after the link, because ld is the one
+place every shared object and dynamic program of this toolchain passes
+through, whatever the build system's link line looks like, and the change is
+small: `elf_finalize_dynstr` marks those strings before `.dynstr` is laid out,
+and the string table lays out and writes the marked strings first. ld still
+shares the tail of one string with another, with one exception: a library name
+is never made the tail of a string that is not one, since its offset would then
+follow that string. A program or library with no such clash is the same size
+as before; `tools/test-dynstr-order.sh` builds one with a clash
+(`zlibdsoa.so.1` beside `libdsoa.so.1`) to test it. Nothing else changes:
+only the order of strings in `.dynstr` and the offsets that point at them.
+
+`tools/check-dynstr-order.py` checks the result on any ELF file, whoever
+linked it: every library name lies before every other string that the dynamic
+section refers to, and inside `DT_STRSZ`. It reads the file through its
+program headers as the runtime linker does, so stripped files are checked the
+same way. Static programs and objects pass, having no `.dynstr`. AMIX's own
+`libc.so.1` fails it, with its `SONAME` as its last string: the runtime linker
+never reads a `SONAME` this way, so that is harmless there, but the check holds
+our files to the stricter rule. It is meant as a gate for every package that
+ships a shared library or a dynamically linked program.
+
+## `sym+N@GOT`: an addend that ld drops
+
+In PIC code a global is reached through its GOT slot: `move.l
+sym@GOT(%a5),%a0` loads the slot, which holds `sym`'s address, and an offset
+into `sym` is added afterwards. gas records the load as `R_68K_GOT32O`
+(`GOT16O` for `-fpic`, `GOT8O` for the byte form). An addend on one of those
+has no meaning, and m68k ld drops it without a word (bfd/elf32-m68k.c: "This
+relocation does not use the addend"): `ext_rec+2@GOT` and `ext_rec@GOT` link
+to the same slot, measured, and the code reads or writes 2 bytes early. GCC 14
+has been seen to emit the form for m68k. None was found here: 0 in the 658
+objects of the twelve shared X11R6.3 libraries built for the 1.1 trial (615 of
+them PIC, 5,467 GOT-offset relocations), 0 in the 486 objects of the earlier
+shared Xt trial, and 0 in a set of extern array, struct and loop patterns at
+`-O1` to `-O3` and `-Os`, `-fpic` and `-fPIC`, for 68020-60, 68030, 68040 and
+68060. So GCC's code generation is left as it is, and the form is caught
+instead.
+
+`tools/check-got-addend.py` reads the relocations of objects and archives and
+lists every GOT-offset relocation with an addend. Only objects can be
+checked: ld zeroes the addend as it links, so even `-Wl,--emit-relocs` shows
+nothing, and a linked file is reported as not checkable rather than passed.
+`R_68K_GOT32`, `GOT16` and `GOT8` are PC-relative and carry the PC bias as
+their addend (the `_GLOBAL_OFFSET_TABLE_@GOTPC` load is a `GOT32` with addend
+2), so they are left alone. `tools/test-got-addend.sh` tests it on a
+synthetic object with both forms, on this compiler's own PIC code and on the
+objects of `tools/test-shared.sh`'s libraries.
