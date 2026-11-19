@@ -68,6 +68,11 @@ produces a **working binary that behaves wrongly** rather than a build error:
   `tools/check-dynstr-order.py` checks any file (`tools/test-dynstr-order.sh`).
   `build-cross.sh` rebuilds binutils, and relinks `libamixrt.so.1`, when the
   patches change.
+- **`sym+N@GOT` is linked to the wrong address, silently.** m68k ld drops the
+  addend of a GOT-offset relocation, so the code gets `sym`, not `sym+N`.
+  GCC 14 has been seen to emit it; `tools/check-got-addend.py` finds it in
+  objects (only there: a linked file no longer shows it). Run it on the PIC
+  objects of anything built shared.
 - **A shared library takes what `libc.so.1` lacks from `libamixrt.so.1`.**
   AMIX has `gettimeofday`, `select` and others only as non-PIC static members
   of `usr/ccs/lib/libc.so`; `libamixrt` holds our own PIC versions plus

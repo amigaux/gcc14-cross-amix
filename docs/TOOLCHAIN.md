@@ -1163,3 +1163,30 @@ same way. Static programs and objects pass, having no `.dynstr`. AMIX's own
 never reads a `SONAME` this way, so that is harmless there, but the check holds
 our files to the stricter rule. It is meant as a gate for every package that
 ships a shared library or a dynamically linked program.
+
+## `sym+N@GOT`: an addend that ld drops
+
+In PIC code a global is reached through its GOT slot: `move.l
+sym@GOT(%a5),%a0` loads the slot, which holds `sym`'s address, and an offset
+into `sym` is added afterwards. gas records the load as `R_68K_GOT32O`
+(`GOT16O` for `-fpic`, `GOT8O` for the byte form). An addend on one of those
+has no meaning, and m68k ld drops it without a word (bfd/elf32-m68k.c: "This
+relocation does not use the addend"): `ext_rec+2@GOT` and `ext_rec@GOT` link
+to the same slot, measured, and the code reads or writes 2 bytes early. GCC 14
+has been seen to emit the form for m68k. None was found here: 0 in the 658
+objects of the twelve shared X11R6.3 libraries built for the 1.1 trial (615 of
+them PIC, 5,467 GOT-offset relocations), 0 in the 486 objects of the earlier
+shared Xt trial, and 0 in a set of extern array, struct and loop patterns at
+`-O1` to `-O3` and `-Os`, `-fpic` and `-fPIC`, for 68020-60, 68030, 68040 and
+68060. So GCC's code generation is left as it is, and the form is caught
+instead.
+
+`tools/check-got-addend.py` reads the relocations of objects and archives and
+lists every GOT-offset relocation with an addend. Only objects can be
+checked: ld zeroes the addend as it links, so even `-Wl,--emit-relocs` shows
+nothing, and a linked file is reported as not checkable rather than passed.
+`R_68K_GOT32`, `GOT16` and `GOT8` are PC-relative and carry the PC bias as
+their addend (the `_GLOBAL_OFFSET_TABLE_@GOTPC` load is a `GOT32` with addend
+2), so they are left alone. `tools/test-got-addend.sh` tests it on a
+synthetic object with both forms, on this compiler's own PIC code and on the
+objects of `tools/test-shared.sh`'s libraries.

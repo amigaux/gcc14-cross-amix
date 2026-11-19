@@ -188,6 +188,14 @@ library, for a library's pointers to its own data, and for `libamixrt.so.1`;
 [`docs/shared-library-tests.md`](docs/shared-library-tests.md) says how to run
 them on the machine and what to expect.
 
+Two checks are meant for any build that makes shared libraries, as gates:
+`tools/check-dynstr-order.py` says whether a dynamic ELF file has its library
+names at the start of `.dynstr`, which AMIX's runtime linker needs when
+`dlopen` loads a library with dependencies, and `tools/check-got-addend.py`
+finds `sym+N@GOT` in PIC objects, a form ld links silently to the wrong
+address. `tools/test-dynstr-order.sh` and `tools/test-got-addend.sh` test
+both, and the linker's part.
+
 ## Status
 
 Working: C and C++ compilation and linking, `libgcc`, `libsupc++`, a **hosted**
