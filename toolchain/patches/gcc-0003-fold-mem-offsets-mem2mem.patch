@@ -1,0 +1,68 @@
+fold-mem-offsets: a use that is a memory root must use the folded register only as that root's base (m68k memory-to-memory moves).
+
+Author: Bernie Innocenti (the base-register check); gcc14-cross-amix
+  contributors (the destination-address check, 2026-11-20)
+Origin: https://github.com/AmigaPorts/gcc (branch amiga16.2, tag
+  m68k-amigaos-gcc-v16.2-rc24) commit 1e6714c8f3756fc92ec93d4a3a25a49333b5407b,
+  the same change as toolchain/patches-gcc16/0009-fold-mem-offsets-mem2mem.patch
+  on the GCC 16 build, extended here.
+Upstream: not in GCC.  No fold-mem-offsets fix on releases/gcc-14, -15 or -16
+  covers it (checked 2026-11-20); master has rewritten the pass on RTL-SSA.
+Licence: GPL-3.0-or-later, as the GCC sources it changes.
+Base: GCC 14.2.0; gcc-0001 and gcc-0002 do not touch this file.
+
+The fault: fold_offsets accepts every use of a foldable add that is in
+can_fold_insns, and every memory root is.  A memory-to-memory move is a
+root for its SOURCE operand only (get_fold_mem_root takes SET_SRC first),
+but the folded register may be the index of its DESTINATION:
+
+  d0 = d0 + -4                          deleted ("Instruction folded")
+  mem (a0 + d0) = mem (a1 + 64)         keeps d0, now 4 too high
+  a2 = a2 + d0
+  mem (a2) = ...                        offset 0 -> -4
+
+so `a[n - 1] = s->v; b[n - 1] = f ();` stores a[n].  Measured with GCC
+14.2.0 -O2 -m68020-60: move.l 64(%a1),(%a0,%d0.l), d0 = n * 4.
+
+AmigaPorts' check refuses a root use whose base register is not the folded
+one.  The second check refuses a root use where the folded register is the
+source's base and also appears in a memory destination's address, which
+would keep its old offset for the same reason.  Both only refuse folds.
+
+The toolchain's specs also pass -fno-fold-mem-offsets by default; this
+patch is for code built with -ffold-mem-offsets.
+
+diff -u a/gcc/fold-mem-offsets.cc b/gcc/fold-mem-offsets.cc
+--- a/gcc/fold-mem-offsets.cc
++++ b/gcc/fold-mem-offsets.cc
+@@ -254,6 +254,8 @@
+ 
+ static HOST_WIDE_INT
+ fold_offsets (rtx_insn *insn, rtx reg, bool analyze, bitmap foldable_insns);
++bool get_fold_mem_root (rtx_insn *insn, rtx *mem_out, rtx *reg_out,
++			HOST_WIDE_INT *offset_out);
+ 
+ /*  Helper function for fold_offsets.
+ 
+@@ -544,6 +546,21 @@
+ 	  if (use_set && MEM_P (SET_DEST (use_set))
+ 	      && reg_mentioned_p (dest, SET_SRC (use_set)))
+ 	    return 0;
++
++	  /* The folded offset goes into the one memory operand that
++	     get_fold_mem_root finds, so in a use that is a memory root DEST
++	     must be that operand's base register and appear nowhere else.
++	     A memory-to-memory move, which some targets have, is a root
++	     for its source operand only: DEST in its destination address
++	     would keep its old offset while the insn that set it is
++	     deleted.  */
++	  rtx use_mem, use_base;
++	  if (get_fold_mem_root (use, &use_mem, &use_base, NULL)
++	      && (REGNO (use_base) != dest_regno
++		  || (use_mem != SET_DEST (use_set)
++		      && MEM_P (SET_DEST (use_set))
++		      && reg_mentioned_p (dest, XEXP (SET_DEST (use_set), 0)))))
++	    return 0;
+ 	}
+ 
+       bitmap_set_bit (&can_fold_insns, INSN_UID (def));

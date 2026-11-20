@@ -40,6 +40,14 @@ produces a **working binary that behaves wrongly** rather than a build error:
   speed, not ABI (layout unchanged, measured): 1.6x Dhrystone on a 68060. On
   a 68040, a misaligned access across a page boundary wedges a kernel older
   than the 040/060 port's 68040-260728-26.
+- **`-fno-fold-mem-offsets` is a default, for correctness.** GCC 14.2.0's
+  fold-mem-offsets pass (on from `-O2`) deleted an add whose register a
+  memory-to-memory move's destination still used: `a[n - 1] = s->v` stored
+  `a[n]`. The specs turn it off at every level; a third GCC patch,
+  `gcc-0003-fold-mem-offsets-mem2mem.patch`, fixes the case for anyone who
+  turns it back on. `tools/test-wrong-code.sh` runs that case and the PR
+  126121 ones under qemu-m68k; run it after any change to the specs or the
+  GCC patches.
 - **`export MAKEINFO=true`**, or binutils dies in `doc/bfd.info` minutes in.
 - **The C++ linkage wrappers are generated, never committed.** AMIX's C headers
   predate C++ and declare no linkage, so a C++ file including `<stdio.h>` gets a

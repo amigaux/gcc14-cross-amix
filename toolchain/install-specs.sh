@@ -154,7 +154,18 @@ replace("cc1", "%(cc1_cpu) -Wno-error=implicit-int")
 # same either way (measured), so code built with and without it mixes freely.
 # It needs a port kernel from 68040-260728-26 on when run on a 68040: see
 # docs/TOOLCHAIN.md, "-mno-strict-align is the default".
-replace("self_spec", "%{!mno-align-int:-malign-int} %{!mstrict-align:-mno-strict-align}")
+#
+# -fno-fold-mem-offsets is correctness.  GCC 14.2.0's fold-mem-offsets pass,
+# on by default from -O2, moves a register's constant into a memory operand
+# and deletes the add, and on m68k it misses a second use of that register
+# as the index of a memory-to-memory move's destination, which then writes
+# one element too far: `a[n - 1] = s->v` stored a[n] (CDE's DtSvc).  Off at
+# every level, for every language and for the runtime's own build;
+# toolchain/patches/gcc-0003-fold-mem-offsets-mem2mem.patch fixes the case
+# for anyone who turns the pass back on with -ffold-mem-offsets.  See
+# docs/TOOLCHAIN.md, "fold-mem-offsets is off".
+replace("self_spec", "%{!mno-align-int:-malign-int} %{!mstrict-align:-mno-strict-align}"
+        " %{!ffold-mem-offsets:-fno-fold-mem-offsets}")
 
 # Read off the machine's own /usr/bin/ls: libc.so.1 IS the runtime linker, text
 # starts at 0x80000000, and the hash table is the classic SysV one.  Nothing

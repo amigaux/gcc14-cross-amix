@@ -1327,3 +1327,91 @@ their addend (the `_GLOBAL_OFFSET_TABLE_@GOTPC` load is a `GOT32` with addend
 2), so they are left alone. `tools/test-got-addend.sh` tests it on a
 synthetic object with both forms, on this compiler's own PIC code and on the
 objects of `tools/test-shared.sh`'s libraries.
+
+## fold-mem-offsets is off
+
+**The fault.** GCC 14.2.0 has a late RTL pass, fold-mem-offsets (on by
+default from `-O2`), that moves the constant of an add such as
+`d0 = d0 + -4` into the offsets of the memory operands that use `d0` and
+deletes the add. It only does so when every use of `d0` is an address it can
+adjust, and it counts every instruction it treats as a memory root as one.
+On m68k a memory-to-memory move is a root for its *source* operand only, so
+a register that indexes its *destination* was taken as handled when it was
+not:
+
+```c
+a[count - 1] = s->v;            /* move.l 64(%a1),(%a0,%d0.l), d0 = count * 4 */
+b[count - 1] = f (count);       /* move.l %d0,-4(%a0) */
+```
+
+The `-4` went into the second store and the subtraction was deleted, so the
+first store wrote `a[count]`, one element past the end of a block just
+`realloc`ed to `count` elements. The pass dump says it plainly: "Memory offset
+changed from 0 to -4" for the second store, then "Instruction folded: d0 = d0
++ -4". Found in CDE's DtSvc (`MMDb.c`, `build_file_list`), which writes its
+`mtime_list` that way. `-O1`, `-Os` (the pass skips blocks optimised for
+size) and `-O2 -fno-fold-mem-offsets` were right.
+
+**Upstream.** No fold-mem-offsets fix on `releases/gcc-14`, `-15` or `-16`
+covers it (checked 2026-11-20): after 14.2.0 the pass gained a limit for
+highly connected CFGs (PR 117922), a fix to the mode passed to
+`memory_address_addr_space_p` (`c37b65b334`, GCC 16) and, on master only, a
+rewrite on RTL-SSA with a fix for roots sharing a folded add (PR 126412).
+None of them is about memory-to-memory moves; the use check of the master
+rewrite still has only the special case for a stored register (read, not
+tested). The AmigaPorts
+GCC 16 branch fixed it (`1e6714c8f3`, Bernie Innocenti), which is why the
+GCC 16 build here carries it as `patches-gcc16/0009`.
+
+**The default.** The specs pass `-fno-fold-mem-offsets` (in `self_spec`,
+beside `-malign-int`), so the pass is off at every level, for C and C++, and
+for libgcc and libstdc++ as they are built. `-ffold-mem-offsets` turns it
+back on. Because the specs reach the runtime's own compiles, `build-cross.sh`
+now rebuilds GCC and the runtime when `install-specs.sh` changes (its sum is
+in `$TC_PREFIX/.install-specs.sha256`), as it does for a GCC patch. This is the fix the toolchain relies on: the fix that exists is
+not GCC's, the pass is new (GCC 14) and little used on m68k, and what it
+saves is an add here and there.
+
+**The patch.** `toolchain/patches/gcc-0003-fold-mem-offsets-mem2mem.patch`
+is AmigaPorts' check, that a use which is a memory root must have the folded
+register as its base, plus one of ours: the register must not also appear in
+a memory destination's address, which would keep its old offset for the
+same reason. Both only refuse folds. It is there for code built with
+`-ffold-mem-offsets`; with it the pass deletes no add in the case above.
+
+**What it changes.** Built from zero on 2026-11-20 in three prefixes -- 1.1 as
+released (`c806d49`), with the PR 126121 patches only, and with these as
+well -- and compared by `objdump -d`. The specs gain the one flag. In the
+whole of `libgcc.a` the pass had deleted two adds, both in this shape, in
+the unwinder's DWARF expression evaluator (`unwind-dw2.c`,
+`execute_stack_op`): `DW_OP_swap` stored its first value to `stack[n]`
+instead of `stack[n - 2]` and `DW_OP_rot` to `stack[n]` instead of
+`stack[n - 3]`. The unwind tables GCC writes for ordinary m68k code use
+neither operation, so the fault is latent, but it is in every program built
+with the 1.1 toolchain that links the unwinder (C++ with exceptions); with
+the pass off, or with the patch, that code is right, and nothing else in
+`libgcc.a` changes. In `libstdc++.a` and in
+`libamixc99.a` the pass had made only correct folds (rebuilt with the
+patched pass forced on, `libstdc++.a` is the same code as 1.1's), and
+turning it off costs those an add here and there: `libamixc99.a` changes in
+`__cxa_finalize` only (one `subq.l #8` more), and so does `libamixrt.so.1`,
+which holds the same code. `libsupc++.a`, `libstdc++exp.a`, `amix_init.o`,
+`amix_initS.o` and the `crt*.o` are unchanged. The PR 126121 patches, on
+their own, change no code in any of them (measured here, as on `next`):
+`libamixrt.so.1` is the same file, byte for byte, and the archives differ
+only in the build directory recorded in their debug information.
+
+**The test.** `tools/test-wrong-code.sh` checks that the driver passes the
+flag at `-O1`, `-O2`, `-O3` and `-Os` for C and C++ and leaves the pass on
+when asked; that `tests/wrong-code/fmo.c` is the same code at `-O2` with and
+without the flag, and that with `-ffold-mem-offsets` the pass deletes no add
+in it; that `tools/check-bset-mem.py` finds nothing in the `byteclr` case or
+the runtime libraries; and it builds `fmo` and the PR 126121 `byteclr` case
+at `-O1`, `-O2`, `-O3`, `-Os` and `-O2 -ffold-mem-offsets` and runs them on
+a 68030, a 68040 and a 68060 in qemu-m68k, checking every stored value. The
+cases call no library, so a Linux-style `crt0.s` is all they need there.
+With 1.1's compiler it reports 26 failures (the driver checks, `fmo`'s
+code, `check-bset-mem.py` on `byteclr`, and every run), with the PR 126121
+patches alone 19 (all of them fold-mem-offsets), and with both none. On
+this branch these cases stand in for `tests/kernel-codegen/`, which belongs
+to the GCC 16 comparison on `next`.
