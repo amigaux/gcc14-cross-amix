@@ -81,8 +81,8 @@ fetch() {  # $1 = url, $2 = filename
 # docs/TOOLCHAIN.md, "Library names first in .dynstr".
 #
 # Done means built with the current patches: a prefix whose binutils predate a
-# patch is rebuilt, as the compiler is for amix-abi.h below.  libamixrt.so.1 is
-# relinked by the new ld further down.
+# patch is rebuilt, as the compiler is for amix-abi.h and its patches below.
+# libamixrt.so.1 is relinked by the new ld further down.
 BINUTILS_STAMP="$TC_PREFIX/.binutils-patches.sha256"
 BINUTILS_SUM=$(cat "$REPO"/toolchain/patches/binutils-*.patch | sha256sum | cut -d' ' -f1)
 if [ ! -x "$TC_PREFIX/bin/$TARGET-ld" ] || [ "$(cat "$BINUTILS_STAMP" 2>/dev/null)" != "$BINUTILS_SUM" ]; then
@@ -117,20 +117,44 @@ fi
 # behind, and testing for it made the next run skip everything and report
 # success with no C++ library.
 #
-# Done also means built with the current toolchain/amix-abi.h.  A compiler from
-# before that header returns pointers in %d0 only, so it is rebuilt rather
-# than kept: its libraries are wrong for every caller the new one compiles.
-ABI_STAMP="$TC_PREFIX/.amix-abi.sha256"
-ABI_SUM=$(sha256sum "$REPO/toolchain/amix-abi.h" | cut -d' ' -f1)
-if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ] || [ "$(cat "$ABI_STAMP" 2>/dev/null)" != "$ABI_SUM" ]; then
+# Done also means built with the current toolchain/amix-abi.h and the current
+# toolchain/patches/gcc-*.patch.  A compiler from before that header returns
+# pointers in %d0 only, so it is rebuilt rather than kept: its libraries are
+# wrong for every caller the new one compiles.  A compiler from before a patch
+# is rebuilt for the same reason: the patch changes the code it generates.
+#
+# toolchain/patches/gcc-*.patch are applied to the release, in name order
+# (numbered, so the order does not depend on the locale).
+# gcc-0001-bset-bclr-mem-bit-number.patch: GCC PR target/126121.  bset/bclr
+# on a memory byte use only the low 3 bits of a register bit number, and GCC
+# modelled the full number, so `*p |= (char) (1 << n)` with n >= 8 set bit
+# n & 7 instead of nothing.
+# gcc-0002-bitfield-mem-offset-guard.patch: with 0001, `*p &= ~(1 << n)` on
+# a byte fell to bfclr at offset 7 - n, which for n >= 8 clears a bit in the
+# byte before *p; the memory bit-field patterns now take only a constant,
+# non-negative offset.  Ours, not upstream's.
+# See docs/TOOLCHAIN.md, "GCC carries two patches", and
+# tools/check-bset-mem.py, which finds both forms in code built without them.
+GCC_STAMP="$TC_PREFIX/.gcc-inputs.sha256"
+GCC_SUM=$(cat "$REPO/toolchain/amix-abi.h" "$REPO"/toolchain/patches/gcc-*.patch | sha256sum | cut -d' ' -f1)
+if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ] || [ "$(cat "$GCC_STAMP" 2>/dev/null)" != "$GCC_SUM" ]; then
 	fetch "https://ftp.gnu.org/gnu/gcc/gcc-$GCC_VER/gcc-$GCC_VER.tar.xz" "gcc-$GCC_VER.tar.xz"
-	if [ ! -d "$WORK/gcc-$GCC_VER" ]; then
-		tar -C "$WORK" -xf "$WORK/src/gcc-$GCC_VER.tar.xz"
-		cd "$WORK/gcc-$GCC_VER"
-		# mpfr and mpc are not installed on this host; --no-graphite skips isl,
-		# which is only needed for loop optimisations we do not use.
-		./contrib/download_prerequisites --no-graphite
-	fi
+	# Always a fresh tree: patches are applied to the release, never to a tree
+	# an earlier run already changed.
+	rm -rf "${WORK:?}/gcc-${GCC_VER:?}"
+	tar -C "$WORK" -xf "$WORK/src/gcc-$GCC_VER.tar.xz"
+	for p in "$REPO"/toolchain/patches/gcc-*.patch; do
+		echo "== applying $(basename "$p")"
+		patch -d "$WORK/gcc-$GCC_VER" -p1 --forward --no-backup-if-mismatch < "$p"
+	done
+	# mpfr and mpc are not installed on this host; --no-graphite skips isl,
+	# which is only needed for loop optimisations we do not use.  Their
+	# downloads go to the source tree, which is new each time; a copy of the
+	# archives is kept beside the other downloads so a rebuild is offline.
+	cp -n "$WORK"/src/prereq/* "$WORK/gcc-$GCC_VER/" 2>/dev/null || true
+	( cd "$WORK/gcc-$GCC_VER" && ./contrib/download_prerequisites --no-graphite )
+	mkdir -p "$WORK/src/prereq"
+	cp -n "$WORK/gcc-$GCC_VER"/*.tar.* "$WORK/src/prereq/" 2>/dev/null || true
 	# AMIX's return convention, which m68k-elf does not have: see the header.
 	# Appended to the m68k-*-elf* tm_file -- the one line in config.gcc that
 	# ends in m68020-elf.h and a quote -- so it is read after m68kemb.h, whose
@@ -226,7 +250,7 @@ if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ] || [ "$(cat "$ABI_STAMP" 2>/dev
 		exit 1
 	}
 	make install-target-libstdc++-v3
-	echo "$ABI_SUM" > "$ABI_STAMP"
+	echo "$GCC_SUM" > "$GCC_STAMP"
 	echo "== gcc installed"
 fi
 
@@ -259,8 +283,8 @@ fi
 # the range: no 64-bit multiply/divide for the 68060, no 68040/060-only FPU
 # forms for the 68881/68882.  Checked on every run, not only after a build: a
 # prefix built by an earlier version of this script, --with-cpu=68060, passes
-# the test above (libstdc++.a present, amix-abi.h unchanged) and would
-# otherwise be kept.
+# the test above (libstdc++.a present, amix-abi.h and patches unchanged) and
+# would otherwise be kept.
 RUNTIME=("$GCCLIB"/libgcc.a "$GCCLIB"/crt*.o "$TC_PREFIX/$TARGET/lib"/lib{stdc++,stdc++exp,supc++,amixc99}.a "$TC_PREFIX/$TARGET/lib"/amix_init{,S}.o "$TC_PREFIX/$TARGET/lib/amixrt/libamixrt.so.1")
 python3 "$REPO/tools/check-68060-safe.py" --68881 "${RUNTIME[@]}" || {
 	echo "!! the runtime above is not safe on every 68020..68060 + 68881 machine." >&2

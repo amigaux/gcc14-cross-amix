@@ -1,0 +1,60 @@
+m68k: bset/bclr on memory use only the low 3 bits of the bit number; model that.
+
+Author: Andreas Schwab
+Origin: https://gcc.gnu.org/git/gcc.git (master, for GCC 17) commit b407be9e4bdc117a59d232a4db9672544c14a40a
+Upstream: PR target/126121, on GCC master, not on releases/gcc-14 or releases/gcc-16
+Licence: GPL-3.0-or-later, as the GCC sources it changes.
+The diff only (testsuite files left out), regenerated against GCC 14.2.0.
+The same change as toolchain/patches-gcc16/0008-bset-bclr-mem-bit-number.patch.
+
+diff -u a/gcc/config/m68k/m68k.md b/gcc/config/m68k/m68k.md
+--- a/gcc/config/m68k/m68k.md
++++ b/gcc/config/m68k/m68k.md
+@@ -5388,7 +5388,8 @@
+ (define_insn "bsetmemqi"
+   [(set (match_operand:QI 0 "memory_operand" "+m")
+ 	(ior:QI (subreg:QI (ashift:SI (const_int 1)
+-		(match_operand:SI 1 "general_operand" "d")) 3)
++		(and:SI (match_operand:SI 1 "general_operand" "d")
++			(const_int 7))) 3)
+ 	(match_dup 0)))]
+   ""
+   "bset %1,%0"
+@@ -5398,8 +5399,9 @@
+ (define_insn "*bsetmemqi_ext"
+   [(set (match_operand:QI 0 "memory_operand" "+m")
+ 	(ior:QI (subreg:QI (ashift:SI (const_int 1)
+-	    (match_operator:SI 2 "extend_operator"
+-		[(match_operand 1 "general_operand" "d")])) 3)
++	    (and:SI (match_operator:SI 2 "extend_operator"
++			[(match_operand 1 "general_operand" "d")])
++		    (const_int 7))) 3)
+ 	(match_dup 0)))]
+   ""
+   "bset %1,%0"
+@@ -5439,8 +5441,9 @@
+ (define_insn "bclrmemqi"
+   [(set (zero_extract:SI (match_operand:QI 0 "memory_operand" "+m")
+ 	(const_int 1)
+-	(minus:SI (const_int 7)
+-	    (match_operand:SI 1 "general_operand" "d")))
++	(and:SI (minus:SI (const_int 7)
++		    (match_operand:SI 1 "general_operand" "d"))
++		(const_int 7)))
+     (const_int 0))]
+   ""
+   "bclr %1,%0"
+@@ -5450,9 +5453,10 @@
+ (define_insn "*bclrmemqi_ext"
+   [(set (zero_extract:SI (match_operand:QI 0 "memory_operand" "+m")
+ 	(const_int 1)
+-	(minus:SI (const_int 7)
+-	    (match_operator:SI 2 "extend_operator"
+-		[(match_operand 1 "general_operand" "d")])))
++	(and:SI (minus:SI (const_int 7)
++		    (match_operator:SI 2 "extend_operator"
++			[(match_operand 1 "general_operand" "d")]))
++		(const_int 7)))
+     (const_int 0))]
+   ""
+   "bclr %1,%0"
