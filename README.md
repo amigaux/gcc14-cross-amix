@@ -113,6 +113,25 @@ for code that will only ever run on a 68060.
 Anyone building m68k software for a 68060 without an ISP handler has the same
 problem, whatever their compiler.
 
+## Two GCC fixes: bits of a byte in memory
+
+GCC 14.2.0 believed `bset`/`bclr %dN,<memory>` use the whole bit number in
+`%dN`; the CPU uses its low three bits. So `*p |= (unsigned char) (1 << n)` or
+`*p &= ~(1 << n)` with `n` of 8 or more changed bit `n & 7` of `*p`, where C
+changes nothing (GCC PR target/126121). `build-cross.sh` applies upstream's
+fix, `toolchain/patches/gcc-0001-bset-bclr-mem-bit-number.patch`. That fix
+alone turns the clear into a bit-field clear that, for `n` of 8 or more,
+writes the byte *before* `*p`; our
+`toolchain/patches/gcc-0002-bitfield-mem-offset-guard.patch` keeps the
+memory bit-field patterns to constant offsets, so the byte is updated with
+plain `and.b`. A compiler built without either is rebuilt. The runtime
+libraries come out instruction for instruction the same. Upstream has not
+been told of the second fault yet. `tools/check-bset-mem.py` finds both forms
+in objects, archives, programs or `gcc -S` output and exits 1 when it does,
+for use as a build gate. The details are in
+[`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md), "GCC carries two patches", and in
+[`tests/kernel-codegen/README.md`](tests/kernel-codegen/README.md).
+
 ## What you need
 
 - A Linux host with `gcc`, `g++`, `make`, `python3`, `curl` or `wget`, `bzip2`,

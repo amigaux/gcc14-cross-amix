@@ -73,6 +73,19 @@ produces a **working binary that behaves wrongly** rather than a build error:
   GCC 14 has been seen to emit it; `tools/check-got-addend.py` finds it in
   objects (only there: a linked file no longer shows it). Run it on the PIC
   objects of anything built shared.
+- **GCC carries two patches: `toolchain/patches/gcc-*.patch`.** GCC PR
+  target/126121: `bset`/`bclr %dN,<mem>` use `%dN & 7` and unpatched GCC
+  assumed all of `%dN`, so a bit number of 8 or more changed the wrong bit
+  (0001, upstream's). With that alone, `*p &= ~(1 << n)` on a byte becomes
+  a `bfclr` at offset `7 - n` that reaches the byte before for `n` >= 8;
+  0002 (ours, not reported upstream) lets the memory bit-field patterns
+  take only constant offsets. GCC 16 carries both as 0008 and 0010.
+  `build-cross.sh` applies the patches in number order to a fresh tree and
+  rebuilds GCC when one changes (`.gcc-inputs.sha256`).
+  `tools/check-bset-mem.py` flags both forms in objects or `-S` output;
+  `tests/kernel-codegen/byteclr.c` runs them. A scan that decodes nothing
+  must fail, never pass: a change to how it finds code or skips switch
+  tables gets a case in `tests/check-bset-mem/` (`tools/test-check-bset-mem.sh`).
 - **A shared library takes what `libc.so.1` lacks from `libamixrt.so.1`.**
   AMIX has `gettimeofday`, `select` and others only as non-PIC static members
   of `usr/ccs/lib/libc.so`; `libamixrt` holds our own PIC versions plus
