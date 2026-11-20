@@ -111,6 +111,19 @@ if [ ! -x "$TC_PREFIX/bin/$TARGET-ld" ] || [ "$(cat "$BINUTILS_STAMP" 2>/dev/nul
 	echo "== binutils installed"
 fi
 
+# The specs' self_spec flags reach libgcc's, libstdc++'s and the compat
+# layer's own compiles, so a prefix built with other specs gets a new
+# runtime: forgetting the GCC stamp below rebuilds it.  The flag that made
+# this necessary is -fno-fold-mem-offsets: GCC 14.2.0's fold-mem-offsets pass
+# deleted an add whose register a memory-to-memory move's destination still
+# used, so that store went one element too far, and the 1.1 libgcc.a has
+# the fault in its unwinder.  gcc-0003-fold-mem-offsets-mem2mem.patch fixes
+# the pass for anyone who turns it back on.  See docs/TOOLCHAIN.md,
+# "fold-mem-offsets is off".  The stamp is written once the specs are in.
+SPECS_STAMP="$TC_PREFIX/.install-specs.sha256"
+SPECS_SUM=$(sha256sum "$REPO/toolchain/install-specs.sh" | cut -d' ' -f1)
+[ "$(cat "$SPECS_STAMP" 2>/dev/null)" = "$SPECS_SUM" ] || rm -f "$TC_PREFIX/.gcc-inputs.sha256"
+
 # --------------------------------------------------------------------- gcc ---
 # Done means libstdc++ is installed, not that g++ is: install-gcc puts g++ in
 # place long before libstdc++ is built, so a run that failed there left a g++
@@ -278,6 +291,7 @@ fi
 [ -f "$TC_PREFIX/$TARGET/lib/amix_initS.o" ] && [ -f "$TC_PREFIX/$TARGET/lib/amixrt/libamixrt.so.1" ] \
 	|| "$REPO/tools/build-compat.sh"
 "$REPO/toolchain/install-specs.sh" >/dev/null
+echo "$SPECS_SUM" > "$SPECS_STAMP"
 
 # The runtime is linked into every program, so it has to run on every CPU in
 # the range: no 64-bit multiply/divide for the 68060, no 68040/060-only FPU
