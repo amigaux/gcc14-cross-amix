@@ -207,6 +207,12 @@ library, for a library's pointers to its own data, and for `libamixrt.so.1`;
 [`docs/shared-library-tests.md`](docs/shared-library-tests.md) says how to run
 them on the machine and what to expect.
 
+`tools/test-wrong-code.sh` keeps the compiler's known wrong-code faults
+fixed: it builds the cases in `tests/wrong-code/` at each optimisation level
+and runs them under `qemu-m68k` on a 68030, a 68040 and a 68060, and checks
+the driver's defaults. Run it after any change to the specs or the GCC
+patches.
+
 Two checks are meant for any build that makes shared libraries, as gates:
 `tools/check-dynstr-order.py` says whether a dynamic ELF file has its library
 names at the start of `.dynstr`, which AMIX's runtime linker needs when
@@ -230,6 +236,19 @@ Known and unfixed: `fprintf` reaches AMIX's own formatter, which predates C99
 and mis-handles `ll` conversions -- the compat layer replaces `snprintf` and
 `vsnprintf` but not `fprintf`. Anything printing a 64-bit value through
 `fprintf` will print garbage. See `docs/TOOLCHAIN.md`.
+
+## fold-mem-offsets is off
+
+GCC 14.2.0's fold-mem-offsets pass, on by default from `-O2`, miscompiles
+m68k code: it folds a register's constant into one memory operand and
+deletes the add, while the same register still indexes the destination of
+a memory-to-memory move, so `a[n - 1] = s->v` stores `a[n]`. It was found in
+CDE, and the 1.1 `libgcc.a` has it twice, latent, in the unwinder's
+`DW_OP_swap` and `DW_OP_rot`. The specs pass `-fno-fold-mem-offsets` at
+every level, and `toolchain/patches/gcc-0003-fold-mem-offsets-mem2mem.patch`
+fixes the case for code built with `-ffold-mem-offsets`. GCC itself has no
+fix yet. Details in [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md), "fold-mem-offsets
+is off".
 
 ## Licence
 
