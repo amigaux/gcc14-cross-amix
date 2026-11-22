@@ -263,6 +263,8 @@ if [ ! -f "$TC_PREFIX/$TARGET/lib/libstdc++.a" ] || [ "$(cat "$GCC_STAMP" 2>/dev
 		exit 1
 	}
 	make install-target-libstdc++-v3
+	# Made from the libraries just replaced, so it is made again below.
+	rm -rf "${TC_PREFIX:?}/$TARGET/lib/cxxrt"
 	echo "$GCC_SUM" > "$GCC_STAMP"
 	echo "== gcc installed"
 fi
@@ -293,13 +295,29 @@ fi
 "$REPO/toolchain/install-specs.sh" >/dev/null
 echo "$SPECS_SUM" > "$SPECS_STAMP"
 
+# libstdc++.so.6, the shared C++ runtime that `g++ -shared` and
+# `g++ -shared-libgcc` link: libstdc++ and libgcc's unwinder built
+# position-independent from the GCC build tree.  It is installed in a
+# directory of its own, so a program linked the default way still takes the
+# static libstdc++.a.  Made when it is missing (a new prefix, or the block
+# above rebuilt the libraries it comes from) or its recipe has changed.  See
+# toolchain/build-cxx-shared.sh and docs/TOOLCHAIN.md, "The shared C++
+# runtime".
+CXXRT_STAMP="$TC_PREFIX/.cxxrt-inputs.sha256"
+CXXRT_SUM=$(cat "$REPO/toolchain/build-cxx-shared.sh" "$REPO/compat/amix_cxxrt.c" | sha256sum | cut -d' ' -f1)
+if [ ! -f "$TC_PREFIX/$TARGET/lib/cxxrt/libstdc++.so.6" ] || [ "$(cat "$CXXRT_STAMP" 2>/dev/null)" != "$CXXRT_SUM" ]; then
+	"$REPO/toolchain/build-cxx-shared.sh"
+	echo "$CXXRT_SUM" > "$CXXRT_STAMP"
+fi
+
 # The runtime is linked into every program, so it has to run on every CPU in
 # the range: no 64-bit multiply/divide for the 68060, no 68040/060-only FPU
 # forms for the 68881/68882.  Checked on every run, not only after a build: a
 # prefix built by an earlier version of this script, --with-cpu=68060, passes
 # the test above (libstdc++.a present, amix-abi.h and patches unchanged) and
 # would otherwise be kept.
-RUNTIME=("$GCCLIB"/libgcc.a "$GCCLIB"/crt*.o "$TC_PREFIX/$TARGET/lib"/lib{stdc++,stdc++exp,supc++,amixc99}.a "$TC_PREFIX/$TARGET/lib"/amix_init{,S}.o "$TC_PREFIX/$TARGET/lib/amixrt/libamixrt.so.1")
+RUNTIME=("$GCCLIB"/libgcc.a "$GCCLIB"/crt*.o "$TC_PREFIX/$TARGET/lib"/lib{stdc++,stdc++exp,supc++,amixc99}.a "$TC_PREFIX/$TARGET/lib"/amix_init{,S}.o "$TC_PREFIX/$TARGET/lib/amixrt/libamixrt.so.1"
+	"$TC_PREFIX/$TARGET/lib/cxxrt/libstdc++.so.6" "$TC_PREFIX/$TARGET/lib/cxxrt/libstdc++_nonshared.a")
 python3 "$REPO/tools/check-68060-safe.py" --68881 "${RUNTIME[@]}" || {
 	echo "!! the runtime above is not safe on every 68020..68060 + 68881 machine." >&2
 	echo "!! If it was built by an older version of this script, rebuild it:" >&2
