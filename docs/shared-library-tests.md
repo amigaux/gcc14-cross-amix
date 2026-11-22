@@ -1,6 +1,6 @@
 # Running the shared-library tests on the machine
 
-Four scripts build shared libraries and programs, check them on the host with
+Five scripts build shared libraries and programs, check them on the host with
 `readelf` and `nm`, and stage what the host cannot check in a directory under
 `build/`:
 
@@ -10,9 +10,10 @@ Four scripts build shared libraries and programs, check them on the host with
 | `tools/test-shared-indirect.sh` | `build/test-shared-indirect/` | `sh run-shared-indirect.sh` |
 | `tools/test-pic-globals.sh` | `build/test-pic-globals/` | `sh run-pic-globals.sh` |
 | `tools/test-amixrt.sh` | `build/test-amixrt/` | `sh run-amixrt.sh`, then `sh ram-measure.sh` as root |
+| `tools/test-cxx-shared.sh` | `build/test-cxx-shared/` | `sh run-cxx-shared.sh` |
 
 Each directory is complete: the libraries, the programs, `libamixrt.so.1`
-where they need it, and a script that sets `LD_LIBRARY_PATH` to the directory
+and `libstdc++.so.6` where they need them, and a script that sets `LD_LIBRARY_PATH` to the directory
 itself. Copy a directory to the machine (FTP in binary mode, or
 `tools/push-run.sh`), `cd` into it and run its script. Run every one on a
 68030 with a 68881 or 68882 and on a 68060 on a kernel of the 040/060 port:
@@ -92,6 +93,41 @@ toolchain that built it.
   crash on another; report what it prints with the rest.
 
 Each program ends with `exit status: 0`.
+
+**`run-cxx-shared.sh`: the shared C++ runtime.** Three programs:
+
+- `cxxso-main`, linked with `g++ -shared-libgcc`: first
+  `libcxxsoa: static object constructed (std::cout)`, before anything of
+  `main`, then nine numbered lines, each ending in `ok`, then `PASS` and
+  `exit status: 0`. The steps: libcxxsoa's constructor ran; virtual calls
+  into both libraries; `dynamic_cast` to a type of libcxxsob; an exception
+  thrown in libcxxsoa passing through libcxxsob and caught in the program;
+  one thrown in libcxxsoa and caught in libcxxsob; one thrown in the program
+  through libcxxsob and caught by its base class; `std::vector::at` throwing
+  from `libstdc++.so.6`; a rethrow caught as `std::runtime_error`; a
+  `what()` string built in libcxxsoa.
+- `cxxso-cmain`, a C program linked with plain gcc: the libcxxsoa
+  constructor line, then
+  `cxxso-cmain: b_c_api(5)=25 (25) b_c_api(11)=-121 (-121) -> PASS` and
+  `exit status: 0`.
+- `cxxso-main-static`, the same program linked the default way, with a
+  C++ runtime of its own: no line from `main`, the message
+  `libstdc++.so.6: this program has a C++ runtime of its own ...` on
+  standard error, and `exit status: 127`.
+
+What a failure means:
+
+- The `std::cout` line missing, or a crash before step 1:
+  `libstdc++.so.6`'s constructors did not run before libcxxsoa's.
+- A step that dies with `terminate called` or `abort`: the unwinder does
+  not know the `.eh_frame` of an object on the stack, so the library or the
+  program did not register with `libstdc++.so.6`'s copy.
+- Step 3 or 4 `FAIL` without a crash: the objects do not agree on one
+  `type_info`.
+- `cxxso-main` stopping with the message, or `cxxso-main-static` running
+  `main`: the start-up check is wrong in one direction or the other.
+- `can't find libstdc++.so.6`: it was not copied along, or
+  `LD_LIBRARY_PATH` was not set.
 
 **`ram-measure.sh`: what `libamixrt.so.1` costs a process.** As root:
 `sh ram-measure.sh 10`. It starts ten copies of `ram-plain`, a program whose
