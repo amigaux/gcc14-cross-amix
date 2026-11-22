@@ -1063,6 +1063,18 @@ The rules it is built to:
   `libamixrt` when the program has its own copy but `ld` saw no reason to
   export it.
 - **No text relocations**: it is linked `-z text`.
+- **errno through the GOT, never through `_cerror`.** A failed system call
+  stores `%d0` in `errno` and returns -1 in `__amixrt_cerror`
+  (`compat/amixrt_syscall.S`), which reaches `errno` through a GOT entry
+  the runtime linker fills when it loads the library: the program's `errno`
+  when it has one, which `libc.so.1` then uses too. It used to branch to
+  `libc.so.1`'s `_cerror` through the PLT. `_cerror` takes the error number
+  in `%d0`, and the first call through a PLT entry goes through the runtime
+  linker's lazy binding, which returns with the resolved address in `%d0`,
+  so the first failure in a process set `errno` to `_cerror`'s address
+  (`0xC101FEE0`, measured on k30 and k46 by `solib-main-rt`'s `sysinfo`
+  line). Assembly that hands a register argument to another object must
+  not go through a PLT entry; C calls are not affected.
 
 `gcc -shared` links it `--as-needed`, from a directory of its own
 (`$prefix/m68k-elf/lib/amixrt`) that the specs find next to the compiler with

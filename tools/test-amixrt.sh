@@ -83,6 +83,19 @@ CLASH=$("$NM" -D --defined-only "$RT" | awk '{print $3}' | sort -u | comm -12 - 
 if [ -z "$CLASH" ]; then pass "defines nothing libc.so.1 exports"; else fail "also in libc.so.1: $(echo $CLASH)"; fi
 MISSING=$("$NM" -D --undefined-only "$RT" | awk '$1 == "U" {print $2}' | sort -u | comm -23 - "$LIBC_SYMS")
 if [ -z "$MISSING" ]; then pass "takes everything else from libc.so.1"; else fail "undefined and not in libc.so.1: $(echo $MISSING)"; fi
+# _cerror takes the error number in %d0, and a first call through its PLT
+# entry would reach it with the lazy binder's %d0 instead: errno must be set
+# through the GOT (compat/amixrt_syscall.S).
+if "$NM" -D --undefined-only "$RT" | awk '{print $NF}' | grep -qx _cerror; then
+	fail "never goes to _cerror, whose %d0 the lazy binder changes"
+else
+	pass "never goes to _cerror, whose %d0 the lazy binder changes"
+fi
+if "$READELF" -rW "$RT" | grep -qE 'R_68K_GLOB_DAT +[0-9a-f]+ +errno'; then
+	pass "errno through a GOT entry filled at load time"
+else
+	fail "errno through a GOT entry filled at load time"
+fi
 if python3 tools/check-68060-safe.py --68881 "$RT" > "$OUT/cpu.log" 2>&1; then
 	pass "safe on every 68020..68060 with a 68881 or 68882"
 else
