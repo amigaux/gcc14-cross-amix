@@ -1239,7 +1239,11 @@ source keeps in 0..7, and 5 constant tables in a stripped program's `.text`
 (DES permutation tables in dropbear and xdm) that decode as `btst`. Before
 the switch-table and bound fixes it flagged 535 there, 472 of them switch-table
 words. The two data-only objects in the kit (`sunfont.o`) are exit 2 without
-`--no-code-ok`. Each of those fixes has a regression case in
+`--no-code-ok`. In an unstripped `-fPIC` object a switch table's base is
+a `.L` label the assembler keeps (the table is loaded through the GOT), and
+objdump prints it right after the `jmp`; a `.L` label ends only what is
+known, not the function or the table (taken for a function, it made 6 false
+findings in a PIC libstdc++). Each of those fixes has a regression case in
 `tests/check-bset-mem/` (`tools/test-check-bset-mem.sh`). On `bitops.c` it flags `setbit_char` in
 the unpatched compiler's output and nothing with the first patch. Over the
 test cases, `compat/*.c` and two probes at `-O1`, `-O2`, `-Os` and `-O3` it

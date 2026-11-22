@@ -75,7 +75,9 @@ in the function, or at the first case it reaches.  The index may be any
 data or address register, %fp and %sp included.  When objdump ran the table's
 last word together with the first real instruction, the code after it is
 decoded again from there (objdump --start-address), so nothing real is
-swallowed.  An objdump listing given as input cannot be decoded again; a
+swallowed.  A .L label (kept in an unstripped -fPIC object, where the
+table's base is loaded through the GOT and named right after the jmp) does
+not end the function or the table; it ends only what is known.  An objdump listing given as input cannot be decoded again; a
 table that loses step there is reported as a finding.
 
 Data in .text that is not a switch table (constant tables in a stripped
@@ -442,10 +444,18 @@ def redecode(path, objdump, member, section, start, stop):
     return got
 
 
+def local_label(name):
+    """A compiler-made local label (.L5, .L1754): not a function.  An
+    assembler keeps one in the symbol table when a relocation must name it,
+    as in -fPIC code, where a switch table's base is loaded through the GOT
+    and its .L label then sits right after the jmp, before the table."""
+    return name.startswith(".L")
+
+
 def function_end(recs, i):
-    """Address of the next label in the same member and section."""
+    """Address of the next function label in the same member and section."""
     for x in recs[i:]:
-        if x[0] == "label":
+        if x[0] == "label" and not local_label(x[2]):
             return x[1]
         if x[0] in ("member", "section"):
             break
@@ -527,6 +537,7 @@ def scan_objdump(path, text, allow, out, objdump=None):
             if t:
                 targets.add((member, int(t.group(1), 16)))
     func, member, section, in_code, table, fstart = "?", "", "", False, None, 0
+    named = False       # a function label seen in this section
     w = Walker()
     found = ninsn = 0
     i = 0
@@ -534,14 +545,20 @@ def scan_objdump(path, text, allow, out, objdump=None):
         r = recs[i]
         i += 1
         if r[0] == "member":
-            member, in_code, table = r[1], False, None
+            member, in_code, table, named = r[1], False, None, False
             continue
         if r[0] == "section":
-            in_code, section, table = r[1], r[2], None
+            in_code, section, table, named = r[1], r[2], None, False
             w.reset()
             continue
         if r[0] == "label":
-            func, fstart, table = r[2], r[1], None
+            # A local label is a join, not a new function: what is known
+            # ends there, but the function, its start and a switch table
+            # being read go on (only before any function label in the
+            # section does it stand in for one).
+            if not local_label(r[2]) or not named:
+                func, fstart, table = r[2], r[1], None
+                named = named or not local_label(r[2])
             w.reset()
             continue
         if not in_code:
