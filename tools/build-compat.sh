@@ -94,7 +94,8 @@ fi
 # toolchain build has not made yet when it first runs this script;
 # build-cross.sh runs it again once libgcc is installed.
 RT_MEMBERS="amix_compat amix_cxa amix_str amix_dlopen amixrt_time amixrt_select amixrt_sysinfo \
-	amixrt_truncate amixrt_realpath amixrt_itimer"
+	amixrt_truncate amixrt_realpath amixrt_itimer amixrt_siglongjmp amixrt_fpset amixrt_syslog \
+	amixrt_getmntent amixrt_getutx"
 LIBGCC=$($CC -print-libgcc-file-name 2>/dev/null || true)
 if [ -z "$INC" ] && [ -f "$LIBGCC" ]; then
 	RT="$OUT/pic/rt"
@@ -109,6 +110,7 @@ if [ -z "$INC" ] && [ -f "$LIBGCC" ]; then
 	done
 	$CC -O2 -fPIC -c -o "$RT/amixrt_tables.o" "$RT/amixrt_tables.c"
 	$CC -c -o "$RT/amixrt_syscall.o" compat/amixrt_syscall.S
+	$CC -c -o "$RT/amixrt_vfork.o" compat/amixrt_vfork.S
 	# -nostartfiles: no crti/crtn, so no DT_INIT or DT_FINI, and nothing of
 	# crtbeginS.o; the library initialises nothing.  -nodefaultlibs: not
 	# linked against itself, and not against libc, which it must not NEED
@@ -117,7 +119,7 @@ if [ -z "$INC" ] && [ -f "$LIBGCC" ]; then
 	rm -f "${RT:?}/libamixrt.so.1"
 	$CC -shared -nostartfiles -nodefaultlibs -Wl,-soname,libamixrt.so.1 \
 		-Wl,-z,text -o "$RT/libamixrt.so.1" \
-		$RT_OBJS "$RT/amixrt_tables.o" "$RT/amixrt_syscall.o" -lgcc
+		$RT_OBJS "$RT/amixrt_tables.o" "$RT/amixrt_syscall.o" "$RT/amixrt_vfork.o" -lgcc
 	# Installed in a directory of its own, which the specs find with
 	# %:find-file(amixrt): -L for `gcc -shared`, -rpath-link for every link.
 	# Installed stripped: the members linked from libgcc.a carry DWARF 5,

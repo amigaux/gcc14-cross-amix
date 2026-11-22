@@ -1,7 +1,7 @@
 #!/bin/bash
 # test-compat-host.sh -- run the compat layer's batteries on THIS machine:
-# the formatter, libamixrt's realpath and select, then the C++ destructor
-# list.
+# the formatter, libamixrt's realpath and select, its getmntent, syslog and
+# utmpx groups, then the C++ destructor list.
 #
 # The formatter is ordinary portable C, so its logic can be tested natively in
 # a second rather than over a TFTP round trip to the Amiga. Only usleep is
@@ -22,6 +22,15 @@ cc -O1 -g -Wall -Wextra -o build/hosttest/amixrt-host probe/amixrt-host.c
 rm -rf "${TREE:?}"
 mkdir -p "$TREE"
 (cd "$TREE" && ../amixrt-host)
+rm -rf "${TREE:?}"
+# libamixrt's getmntent, syslog and utmpx groups, with AMIX's record layouts
+# from tests/host-shim, in a scratch directory.
+TREE=build/hosttest/amixrt-libc-tree
+cc -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-unused-result -I tests/host-shim \
+   -o build/hosttest/amixrt-libc-host probe/amixrt-libc-host.c
+rm -rf "${TREE:?}"
+mkdir -p "$TREE"
+(cd "$TREE" && ../amixrt-libc-host)
 rm -rf "${TREE:?}"
 # The C++ destructor list.  Its symbols are renamed, so the host C library's
 # own __cxa_atexit stays in charge of this test program.  Built without PIE:

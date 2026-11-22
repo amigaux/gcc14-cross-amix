@@ -1035,7 +1035,33 @@ does not export, in one position-independent shared object:
 - our own implementations of functions AMIX has only as static members of
   `usr/ccs/lib/libc.so`: `gettimeofday` and `settimeofday`, `select`,
   `truncate` and `ftruncate`, `realpath`, `getitimer` and `setitimer`,
-  `sysinfo`, and the tables `sys_errlist`, `sys_nerr`, `_sys_siglist` and `_sys_nsig`.
+  `sysinfo`, and the tables `sys_errlist`, `sys_nerr`, `_sys_siglist` and `_sys_nsig`;
+- the second wave, for CDE's shared libraries (ToolTalk, the calendar, the
+  terminal and search libraries): `siglongjmp`, `vfork`, `_fpsetround` and
+  `_fpsetsticky` (with `fpsetround` and `fpsetsticky`), the syslog group
+  (`openlog`, `syslog`, `vsyslog`, `closelog`, `setlogmask`), `getmntent`
+  and `getmntany`, and the utmpx group (`getutxent`, `getutxid`,
+  `getutxline`, `pututxline`, `setutxent`, `endutxent`, `utmpxname`,
+  `updutmp`).
+
+The second wave behaves as libc's members do, read off their code: the same
+structures, files and return values, the oddities included -- `sigsetjmp`
+in `libc.so.1` never saves the signal mask whatever it is asked, so
+`siglongjmp` restores none; `_fpsetround` returns the FPCR's precision and
+enable bits rather than the previous mode, and `libm.a`'s `sqrt` restores
+the mode with that; nothing is logged before `openlog`; `pututxline` keeps
+`/var/adm/utmp` in step with `/var/adm/utmpx`. Each file's comment lists
+what it does and the few places where libc's member reads or writes memory
+it never set, which ours do not. `vfork` is libc's entry instruction for
+instruction (it cannot be a C function: the child runs on the parent's
+stack), with only the error branch's target changed. `siglongjmp` resumes
+the context `libc.so.1`'s own `sigsetjmp` saved, a `ucontext_t`, with
+`setcontext`. Left out of the groups, because no library calls them:
+`makeutx` and `modutx`, which talk to `init` through `/etc/initpipe`,
+`updwtmpx`, and `fpgetround` and `fpgetsticky`.
+
+`environ` is not in `libamixrt`: it is the program's own data (see below),
+and every program exports it.
 
 Libc's own members cannot be used: they are not position-independent, so a
 library linking them gets text relocations (8 for `gettimeofday` alone,
@@ -1089,10 +1115,10 @@ Of libc's 101 archive members, 90 define nothing `libc.so.1` exports:
 
 | Kind | Members | In `libamixrt` |
 |---|---|---|
-| Thin system-call wrappers, no state | adjtime, fstatfs, getdents, gtty, hrtsys, mincore, mlockall, munlockall, _nfssys, nfssys, plock, rfsys, seteguid, statfs, stty, swapctl, syscall, sysfs, sysinfo, uadmin, ustat, utssys, vfork (23) | sysinfo (ToolTalk and DtSvc call it); the rest when needed, through `__amixrt_syscall` (`compat/amixrt_syscall.S`), numbers from `<sys/syscall.h>` |
+| Thin system-call wrappers, no state | adjtime, fstatfs, getdents, gtty, hrtsys, mincore, mlockall, munlockall, _nfssys, nfssys, plock, rfsys, seteguid, statfs, stty, swapctl, syscall, sysfs, sysinfo, uadmin, ustat, utssys, vfork (23) | sysinfo (ToolTalk and DtSvc call it), vfork (ToolTalk; `compat/amixrt_vfork.S`); the rest when needed, through `__amixrt_syscall` (`compat/amixrt_syscall.S`), numbers from `<sys/syscall.h>` |
 | The old `stat` entry points | stat, fstat, lstat (3) | never: `<sys/stat.h>` inlines `_xstat`, which `libc.so.1` exports |
-| Code with no state | gettimeofday, select, truncate, realpath, errlst, siglist (first wave); siginfolst, sigflag, siglongjmp, makectxt, ffs, insque, isnanf, modff, l3, cfree, cftime, gethz, ctype, psignal, psiginfo, str2sig, str2id, ttyslot, putpwent, getpw, gcvt, the six fpget/fpset, getmntent, getvfsent, hrtnewres, hrtcftime, hrtstrftime and the `dl_t` arithmetic (47) | first wave in; the rest when needed |
-| State, one per process | getsetitimer (first wave); drand48, syslog, crypt, getpwent, getgrent, getspent, lckpwdf, getut, getutx, ssignal, ecvt, hrtctime (13) | when needed, each group whole |
+| Code with no state | gettimeofday, select, truncate, realpath, errlst, siglist (first wave); siginfolst, sigflag, siglongjmp, makectxt, ffs, insque, isnanf, modff, l3, cfree, cftime, gethz, ctype, psignal, psiginfo, str2sig, str2id, ttyslot, putpwent, getpw, gcvt, the six fpget/fpset, getmntent, getvfsent, hrtnewres, hrtcftime, hrtstrftime and the `dl_t` arithmetic (47) | first wave in; siglongjmp, fpsetrnd, fpsetsticky, getmntent (second wave); the rest when needed |
+| State, one per process | getsetitimer (first wave); drand48, syslog, crypt, getpwent, getgrent, getspent, lckpwdf, getut, getutx, ssignal, ecvt, hrtctime (13) | syslog and getutx (second wave; getutx without makeutx, modutx and updwtmpx); the rest when needed, each group whole |
 | Tied to libc's internals | memalign, valloc (they cut blocks out of libc malloc's headers), mcount, _shrd_data (4) | not as they are |
 
 The other 11 members define names `libc.so.1` exports as well: mostly data
@@ -1114,16 +1140,22 @@ nothing would ever set it. A library's undefined `environ` is satisfied by
 the program, which a check of a library against its NEEDED libraries alone
 has to know.
 
-**What it costs.** The text segment is 20,344 bytes, shared by every
+**What it costs.** The text segment is 27,640 bytes, shared by every
 process, of which a process touches only what it calls; the data segment is
-1,136 bytes, written by 200 `R_68K_RELATIVE` relocations (the table pointers)
-and the GOT, so it is private to each process that loads the library. AMIX's
-68030 kernels map in 2 KiB pages and the 68060 port's in 4 KiB, and the data
-segment does not start on a page boundary: measured with `ram-measure.sh` on a
-68030 with a 1.1 kernel, a process that loads `libamixrt.so.1` costs 2 pages
-of 2 KiB, 4 KiB, more than one that does not. It is installed stripped
-(`--strip-unneeded`: no `.symtab`, no DWARF, `.dynsym` kept), 22,852 bytes
-on disk.
+1,840 bytes (1,408 in the file, 432 of `.bss`), written by 214
+`R_68K_RELATIVE` relocations (the table pointers and 30 GOT entries for the
+library's own data), 4 `R_68K_GLOB_DAT` and, as functions are first called,
+50 `R_68K_JMP_SLOT`, so it is private to each process that loads the
+library. AMIX's 68030 kernels map in 2 KiB pages and the 68060 port's in
+4 KiB, and the data segment does not start on a page boundary: measured with
+`ram-measure.sh` on a 68030 with a 1.1 kernel before the second wave, a
+process that loads `libamixrt.so.1` costs 2 pages of 2 KiB, 4 KiB, more than
+one that does not. The second wave added 708 bytes to the data segment
+(`.bss` 380 of them: the utmpx buffer) and kept it within the same two pages
+of either size (0x8bf8 to 0x9328); `getmntent`'s 1 KiB line buffer is
+allocated when it is first called. It is installed stripped
+(`--strip-unneeded`: no `.symtab`, no DWARF, `.dynsym` kept), 30,948 bytes
+on disk (22,808 before the second wave).
 A process that uses no library needing it pays nothing.
 
 `tools/test-amixrt.sh` checks all of the above on the host -- the exports
@@ -1133,11 +1165,20 @@ exactly, nothing shared with `libc.so.1`, everything it uses exported by
 library the program reaches only through another library, so `libamixrt`'s
 copies are the ones used (`probe/solib-main-rt.c`); state set in the program
 and read in such a library and the other way round, for `drand48`, the syslog
-mask and the interval timers (`probe/solib-main-interpose.c`); and a library
+mask and the interval timers (`probe/solib-main-interpose.c`); a library
 stack loaded with `dlopen`, whose dependencies must be initialised first
-(`probe/solib-dlopen.c`). It also checks that every staged file's segments
-map right in 2 KiB, 4 KiB and 8 KiB pages. `tools/test-compat-host.sh` runs
-`realpath` and `select` on the host against its own.
+(`probe/solib-dlopen.c`); and the second wave against libc's own members:
+`probe/libc-calls.c` is built into a program that links libc's members and
+into a library reached through another one, so its calls are `libamixrt`'s,
+and `run-amixrt.sh` compares the two programs' output line for line. It also
+checks that every staged file's segments map right in 2 KiB, 4 KiB and
+8 KiB pages, that `vfork`'s text is libc's byte for byte, and that every
+program exports `environ`; and it runs `_fpsetround`, `_fpsetsticky` and
+`siglongjmp` side by side with libc's members, taken from the sysroot,
+under qemu-m68k's 68040 and 68060 (`tests/amixrt-qemu/libc-diff.c`).
+`tools/test-compat-host.sh` runs `realpath` and `select` on the host against
+its own, and the getmntent, syslog and utmpx groups with AMIX's record
+layouts (`probe/amixrt-libc-host.c`, `tests/host-shim/`).
 
 ## GCC carries two patches: bits of a byte in memory (PR 126121)
 

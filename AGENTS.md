@@ -100,7 +100,11 @@ produces a **working binary that behaves wrongly** rather than a build error:
   `libamixc99`, and `gcc -shared` links it `--as-needed`. It must define
   nothing `libc.so.1` exports, have no `DT_INIT` and no `DT_NEEDED`, and keep
   default visibility so a program's own copy wins. Add a function only when a
-  library needs it, with the rest of its libc group. `tools/test-amixrt.sh`
+  library needs it, with the rest of its libc group, behaving as libc's
+  member does. Its assembly sets `errno` through the GOT and never calls
+  into another object through a PLT entry with an argument in a register:
+  the lazy binder changes `%d0`. `environ` is the program's (the specs export
+  it from every program), never `libamixrt`'s. `tools/test-amixrt.sh`
   checks all of it; `docs/TOOLCHAIN.md` has the reasons.
 - **Every program carries the constructor runner, in `amix_init.o`, and
   exports it.** It runs shared libraries' constructors after libc is
