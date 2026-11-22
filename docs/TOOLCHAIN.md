@@ -1101,6 +1101,19 @@ which `_rt_setaddr` rebinds libc to, and `_cerror`. Three of them also define
 a name it does not export: `environ` (every program has it, `crt1.o` pulls
 it in), the FP-exception commons of `fpstart0.o`, and the `sys3b` wrapper.
 
+`environ` belongs to the program. `crt1.o` stores the environment in
+`_environ`, which libc's `sh_data.o` defines with `environ` as a weak second
+name. `ld` always exports `_environ`, because `libc.so.1` defines one too and
+must be rebound to the program's, but exports `environ` only when a library
+in the link refers to it -- so a library that refers to it and is opened
+with `dlopen`, or reached when the program was linked without it, could not
+be loaded. The specs therefore export both from every program
+(`--export-dynamic-symbol`, `toolchain/install-specs.sh`), 20 bytes of
+`.dynsym` and `.dynstr`. A second `environ` in `libamixrt` would be wrong:
+nothing would ever set it. A library's undefined `environ` is satisfied by
+the program, which a check of a library against its NEEDED libraries alone
+has to know.
+
 **What it costs.** The text segment is 20,344 bytes, shared by every
 process, of which a process touches only what it calls; the data segment is
 1,136 bytes, written by 200 `R_68K_RELATIVE` relocations (the table pointers)

@@ -187,13 +187,23 @@ replace("self_spec", "%{!mno-align-int:-malign-int} %{!mstrict-align:-mno-strict
 # it is linked.  A program exports the constructor runner from amix_init.o
 # always, not only when a library in its link refers to it: a library it
 # opens with dlopen must find it too.
+#
+# For the same reason a program exports environ and _environ always.  They
+# are the program's own data: crt1.o stores the environment in _environ, and
+# libc's sh_data.o, which every program links, defines it with environ as a
+# weak second name.  ld exports _environ anyway, since libc.so.1 defines one
+# too, but environ only when a library in the link refers to it; a library
+# opened with dlopen, or reached when the program was linked without it,
+# would find no environ and fail to load.  A library must not define its
+# own (libamixrt does not): nothing would ever set it.
 replace("link",
         "%{shared:-shared %{symbolic:-Bsymbolic} --hash-style=sysv -z norelro"
         " --build-id=none --warn-textrel %{!nostdlib:%{!nodefaultlibs:--wrap=dlopen}};"
         ":%{!nostdlib:--dynamic-linker /usr/lib/libc.so.1 -Ttext-segment=0x80000000"
         " --hash-style=sysv -z norelro --build-id=none"
         " %{!nodefaultlibs:--wrap=dlopen}"
-        " --export-dynamic-symbol=__amix_dso_init --export-dynamic-symbol=__amix_dso_batch}}"
+        " --export-dynamic-symbol=__amix_dso_init --export-dynamic-symbol=__amix_dso_batch"
+        " --export-dynamic-symbol=environ --export-dynamic-symbol=_environ}}"
         " -rpath-link %:find-file(amixrt)")
 open(path, "w").write(text)
 PY
