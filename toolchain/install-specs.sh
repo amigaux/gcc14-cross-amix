@@ -187,14 +187,41 @@ replace("self_spec", "%{!mno-align-int:-malign-int} %{!mstrict-align:-mno-strict
 # it is linked.  A program exports the constructor runner from amix_init.o
 # always, not only when a library in its link refers to it: a library it
 # opens with dlopen must find it too.
+#
+# For the same reason a program exports environ and _environ always.  They
+# are the program's own data: crt1.o stores the environment in _environ, and
+# libc's sh_data.o, which every program links, defines it with environ as a
+# weak second name.  ld exports _environ anyway, since libc.so.1 defines one
+# too, but environ only when a library in the link refers to it; a library
+# opened with dlopen, or reached when the program was linked without it,
+# would find no environ and fail to load.  A library must not define its
+# own (libamixrt does not): nothing would ever set it.
+#
+# The shared C++ runtime, libstdc++.so.6, is in a directory of its own
+# (toolchain/build-cxx-shared.sh), and only `-shared` and `-shared-libgcc`
+# put it on the library path, ahead of the directory that holds libstdc++.a:
+# so `g++ -shared` makes a library that NEEDs libstdc++.so.6 instead of
+# carrying a static, non-PIC copy of the runtime, and a program linked
+# without the option is what it was, byte for byte.  -shared-libgcc is
+# GCC's own option for "the shared unwinder", and here the unwinder is in
+# libstdc++.so.6, so it takes the whole runtime from there.  (A new option
+# cannot be used: the driver accepts an option it does not know only from a
+# -specs= file, never from this one.)  It is here and not in the lib spec
+# because ld searches the -L directories in command-line order, and the
+# driver names the one with libstdc++.a before the lib spec; this spec comes
+# first.  -static-libstdc++ still finds libstdc++.a: ld then looks for
+# archives only, and the directory has none of that name.  -rpath-link lets
+# ld find libstdc++.so.6 when a library in the link NEEDs it, for every link.
 replace("link",
-        "%{shared:-shared %{symbolic:-Bsymbolic} --hash-style=sysv -z norelro"
+        "%{shared|shared-libgcc:-L%:find-file(cxxrt)}"
+        " %{shared:-shared %{symbolic:-Bsymbolic} --hash-style=sysv -z norelro"
         " --build-id=none --warn-textrel %{!nostdlib:%{!nodefaultlibs:--wrap=dlopen}};"
         ":%{!nostdlib:--dynamic-linker /usr/lib/libc.so.1 -Ttext-segment=0x80000000"
         " --hash-style=sysv -z norelro --build-id=none"
         " %{!nodefaultlibs:--wrap=dlopen}"
-        " --export-dynamic-symbol=__amix_dso_init --export-dynamic-symbol=__amix_dso_batch}}"
-        " -rpath-link %:find-file(amixrt)")
+        " --export-dynamic-symbol=__amix_dso_init --export-dynamic-symbol=__amix_dso_batch"
+        " --export-dynamic-symbol=environ --export-dynamic-symbol=_environ}}"
+        " -rpath-link %:find-file(amixrt) -rpath-link %:find-file(cxxrt)")
 open(path, "w").write(text)
 PY
 

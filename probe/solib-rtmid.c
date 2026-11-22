@@ -14,6 +14,7 @@ int rt_setitimer(long, long);
 long rt_getitimer(void);
 int rt_tables(void);
 int rt_snprintf(char *, int);
+long rt_sysinfo(int, char *, long);
 
 long mid_now(void) { return rt_now(); }
 long mid_select_sleep_us(long ms) { return rt_select_sleep_us(ms); }
@@ -25,3 +26,4 @@ int mid_setitimer(long i, long v) { return rt_setitimer(i, v); }
 long mid_getitimer(void) { return rt_getitimer(); }
 int mid_tables(void) { return rt_tables(); }
 int mid_snprintf(char *b, int n) { return rt_snprintf(b, n); }
+long mid_sysinfo(int c, char *b, long n) { return rt_sysinfo(c, b, n); }

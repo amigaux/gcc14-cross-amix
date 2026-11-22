@@ -24,5 +24,9 @@ must be flagged, and the table's words must not be: they decode as
 | `section-null-name.s` | linked, then its code section is given string-table offset 0 as its name, as the k30 kernel's is: objdump prints `Disassembly of section :`, and the scan decoded nothing and passed |
 | `no-code.s` | a file with no code passed; now exit 2, or a pass with `--no-code-ok` |
 | `masks.s` | a bit number masked with `andi.b #7` (with or without a later `andi.l #255`), or produced by a 3-bit `bfextu`, was flagged; `andi.b #15` must still be |
+| `pic-local-label.s` | -fPIC code loads a switch table's address through the GOT, so its `.L` label is kept and objdump prints it right after the `jmp`; it was taken for a new function, which ended the table, and the entries were flagged (six false findings in a PIC libstdc++) |
+| `pic-pr126121.s` | the real patterns (unmasked `bset`, `bfclr` at offset 7 - n) in that PIC form, still flagged in the function, not under a `.L` name; a function label still ends what is known |
+| `nonpic-pr126121.s` | the same code without kept labels |
 
-With the scan as it was at `c9eb0f4`, every case fails.
+With the scan as it was at `c9eb0f4`, every case fails; at `1c09966`, the
+two `pic-` cases do.

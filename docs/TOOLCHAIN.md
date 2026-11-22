@@ -944,22 +944,29 @@ reads after it has searched the archives, and the libraries loaded with
 `tools/test-shared-indirect.sh` links a program against a library that NEEDs
 another, naming only the first, and checks the result.
 
-The C++ runtime is not in `libamixrt`. Four consequences:
+The C++ runtime is not in `libamixrt`. It is in `libstdc++.so.6`, which
+`g++ -shared` links (see "The shared C++ runtime" below). Four
+consequences:
 
-- A program that uses a C++ library links with `g++`, even if the program
-  itself is C. Otherwise `ld` stops with `undefined reference to
-  __gxx_personality_v0`. A destructor that calls any C function needs it:
-  AMIX's headers do not mark C functions as non-throwing, so the call inside
-  a `noexcept` destructor gets an exception table.
-- A C++ library reached only through another library's `DT_NEEDED` still
-  fails to link: `operator delete` and the rest of `libstdc++.a` are filled
-  in for libraries on the command line only. Name it, or link the program
-  against it directly. A shared `libstdc++` would fix it, and is not built.
-- Build a C++ library with `gcc -shared`, or `g++ -shared -nostdlib++`. Plain
-  `g++ -shared` adds `-lstdc++ -lm` and copies a static, non-PIC C++ runtime
-  into the library, and `--warn-textrel` says so.
+- Build a C++ library with `g++ -shared`. It NEEDs `libstdc++.so.6` and
+  carries no copy of the runtime. `gcc -shared`, or `g++ -shared
+  -nostdlib++`, leaves the runtime's symbols undefined, to be found at run
+  time in whatever provides them; `g++ -shared -static-libstdc++` copies the
+  static, non-PIC runtime into the library, and `--warn-textrel` says so.
+- A C++ program that uses a C++ library links with `g++ -shared-libgcc`, so
+  that it takes the runtime from `libstdc++.so.6` too. Linked the default
+  way it carries a static copy of its own, and `libstdc++.so.6` stops it at
+  start-up with a message, because exceptions cannot cross between the two.
+  A C program needs no option: it links nothing of the C++ runtime.
+- A C++ library reached only through another library's `DT_NEEDED` links:
+  what it needs of the runtime is in `libstdc++.so.6`, which the library
+  NEEDs, and `-rpath-link` finds it.
 - `libgcc` is linked into each library. Its members are hidden, and its
   integer helpers (`__divdi3` and the rest) have no absolute relocations.
+  Its floating-point helpers (`lb1sf68.S`: `long double` conversions,
+  `__fixunsxfsi` and the like) have: a library that uses them gets text
+  relocations. `libstdc++.so.6` is linked against a position-independent
+  build of libgcc for that reason.
 
 **C++ static destructors run at exit, from `libamixc99`.** A library's static
 objects register with `__cxa_atexit` like the program's own, into one list:
@@ -978,11 +985,14 @@ library's destructors, and at exit the call finds them already done.
 `tools/test-compat-host.sh` checks which entries each call runs, and the exit
 order against a stand-in `_cleanup`.
 
-**Exceptions do not cross a library.** The unwinder is in `libgcc.a`, built
-with hidden symbols, so each program has a private copy. A shared library
-cannot register its `.eh_frame` with that copy, and an exception thrown in or
-through a library's frames ends in `terminate`. Making that work needs a shared
-`libgcc_s`, which is not built.
+**Exceptions cross a library when everything uses one runtime.** The
+unwinder in `libgcc.a` is built with hidden symbols, so a program linked
+the default way has a private copy, and a shared library cannot register
+its `.eh_frame` with it. `libstdc++.so.6` exports the unwinder: every C++
+library linked with `g++ -shared`, and every program linked with
+`g++ -shared-libgcc`, registers with that one copy, and an exception can be
+thrown in one object and caught in another. Mixing the two is what
+`libstdc++.so.6`'s start-up check stops.
 
 **Function addresses differ across the boundary.** Measured on AMIX 2.1c. When
 a program takes the address of a library function, `ld` gives the program a
@@ -1034,8 +1044,34 @@ does not export, in one position-independent shared object:
   `__cxa_finalize`, and `__wrap_dlopen`;
 - our own implementations of functions AMIX has only as static members of
   `usr/ccs/lib/libc.so`: `gettimeofday` and `settimeofday`, `select`,
-  `truncate` and `ftruncate`, `realpath`, `getitimer` and `setitimer`, and
-  the tables `sys_errlist`, `sys_nerr`, `_sys_siglist` and `_sys_nsig`.
+  `truncate` and `ftruncate`, `realpath`, `getitimer` and `setitimer`,
+  `sysinfo`, and the tables `sys_errlist`, `sys_nerr`, `_sys_siglist` and `_sys_nsig`;
+- the second wave, for CDE's shared libraries (ToolTalk, the calendar, the
+  terminal and search libraries): `siglongjmp`, `vfork`, `_fpsetround` and
+  `_fpsetsticky` (with `fpsetround` and `fpsetsticky`), the syslog group
+  (`openlog`, `syslog`, `vsyslog`, `closelog`, `setlogmask`), `getmntent`
+  and `getmntany`, and the utmpx group (`getutxent`, `getutxid`,
+  `getutxline`, `pututxline`, `setutxent`, `endutxent`, `utmpxname`,
+  `updutmp`).
+
+The second wave behaves as libc's members do, read off their code: the same
+structures, files and return values, the oddities included -- `sigsetjmp`
+in `libc.so.1` never saves the signal mask whatever it is asked, so
+`siglongjmp` restores none; `_fpsetround` returns the FPCR's precision and
+enable bits rather than the previous mode, and `libm.a`'s `sqrt` restores
+the mode with that; nothing is logged before `openlog`; `pututxline` keeps
+`/var/adm/utmp` in step with `/var/adm/utmpx`. Each file's comment lists
+what it does and the few places where libc's member reads or writes memory
+it never set, which ours do not. `vfork` is libc's entry instruction for
+instruction (it cannot be a C function: the child runs on the parent's
+stack), with only the error branch's target changed. `siglongjmp` resumes
+the context `libc.so.1`'s own `sigsetjmp` saved, a `ucontext_t`, with
+`setcontext`. Left out of the groups, because no library calls them:
+`makeutx` and `modutx`, which talk to `init` through `/etc/initpipe`,
+`updwtmpx`, and `fpgetround` and `fpgetsticky`.
+
+`environ` is not in `libamixrt`: it is the program's own data (see below),
+and every program exports it.
 
 Libc's own members cannot be used: they are not position-independent, so a
 library linking them gets text relocations (8 for `gettimeofday` alone,
@@ -1063,6 +1099,18 @@ The rules it is built to:
   `libamixrt` when the program has its own copy but `ld` saw no reason to
   export it.
 - **No text relocations**: it is linked `-z text`.
+- **errno through the GOT, never through `_cerror`.** A failed system call
+  stores `%d0` in `errno` and returns -1 in `__amixrt_cerror`
+  (`compat/amixrt_syscall.S`), which reaches `errno` through a GOT entry
+  the runtime linker fills when it loads the library: the program's `errno`
+  when it has one, which `libc.so.1` then uses too. It used to branch to
+  `libc.so.1`'s `_cerror` through the PLT. `_cerror` takes the error number
+  in `%d0`, and the first call through a PLT entry goes through the runtime
+  linker's lazy binding, which returns with the resolved address in `%d0`,
+  so the first failure in a process set `errno` to `_cerror`'s address
+  (`0xC101FEE0`, measured on k30 and k46 by `solib-main-rt`'s `sysinfo`
+  line). Assembly that hands a register argument to another object must
+  not go through a PLT entry; C calls are not affected.
 
 `gcc -shared` links it `--as-needed`, from a directory of its own
 (`$prefix/m68k-elf/lib/amixrt`) that the specs find next to the compiler with
@@ -1077,10 +1125,10 @@ Of libc's 101 archive members, 90 define nothing `libc.so.1` exports:
 
 | Kind | Members | In `libamixrt` |
 |---|---|---|
-| Thin system-call wrappers, no state | adjtime, fstatfs, getdents, gtty, hrtsys, mincore, mlockall, munlockall, _nfssys, nfssys, plock, rfsys, seteguid, statfs, stty, swapctl, syscall, sysfs, sysinfo, uadmin, ustat, utssys, vfork (23) | when needed: `trap #0` and `_cerror`, from `<sys/syscall.h>` |
+| Thin system-call wrappers, no state | adjtime, fstatfs, getdents, gtty, hrtsys, mincore, mlockall, munlockall, _nfssys, nfssys, plock, rfsys, seteguid, statfs, stty, swapctl, syscall, sysfs, sysinfo, uadmin, ustat, utssys, vfork (23) | sysinfo (ToolTalk and DtSvc call it), vfork (ToolTalk; `compat/amixrt_vfork.S`); the rest when needed, through `__amixrt_syscall` (`compat/amixrt_syscall.S`), numbers from `<sys/syscall.h>` |
 | The old `stat` entry points | stat, fstat, lstat (3) | never: `<sys/stat.h>` inlines `_xstat`, which `libc.so.1` exports |
-| Code with no state | gettimeofday, select, truncate, realpath, errlst, siglist (first wave); siginfolst, sigflag, siglongjmp, makectxt, ffs, insque, isnanf, modff, l3, cfree, cftime, gethz, ctype, psignal, psiginfo, str2sig, str2id, ttyslot, putpwent, getpw, gcvt, the six fpget/fpset, getmntent, getvfsent, hrtnewres, hrtcftime, hrtstrftime and the `dl_t` arithmetic (47) | first wave in; the rest when needed |
-| State, one per process | getsetitimer (first wave); drand48, syslog, crypt, getpwent, getgrent, getspent, lckpwdf, getut, getutx, ssignal, ecvt, hrtctime (13) | when needed, each group whole |
+| Code with no state | gettimeofday, select, truncate, realpath, errlst, siglist (first wave); siginfolst, sigflag, siglongjmp, makectxt, ffs, insque, isnanf, modff, l3, cfree, cftime, gethz, ctype, psignal, psiginfo, str2sig, str2id, ttyslot, putpwent, getpw, gcvt, the six fpget/fpset, getmntent, getvfsent, hrtnewres, hrtcftime, hrtstrftime and the `dl_t` arithmetic (47) | first wave in; siglongjmp, fpsetrnd, fpsetsticky, getmntent (second wave); the rest when needed |
+| State, one per process | getsetitimer (first wave); drand48, syslog, crypt, getpwent, getgrent, getspent, lckpwdf, getut, getutx, ssignal, ecvt, hrtctime (13) | syslog and getutx (second wave; getutx without makeutx, modutx and updwtmpx); the rest when needed, each group whole |
 | Tied to libc's internals | memalign, valloc (they cut blocks out of libc malloc's headers), mcount, _shrd_data (4) | not as they are |
 
 The other 11 members define names `libc.so.1` exports as well: mostly data
@@ -1089,16 +1137,35 @@ which `_rt_setaddr` rebinds libc to, and `_cerror`. Three of them also define
 a name it does not export: `environ` (every program has it, `crt1.o` pulls
 it in), the FP-exception commons of `fpstart0.o`, and the `sys3b` wrapper.
 
-**What it costs.** The text segment is 20,200 bytes, shared by every
+`environ` belongs to the program. `crt1.o` stores the environment in
+`_environ`, which libc's `sh_data.o` defines with `environ` as a weak second
+name. `ld` always exports `_environ`, because `libc.so.1` defines one too and
+must be rebound to the program's, but exports `environ` only when a library
+in the link refers to it -- so a library that refers to it and is opened
+with `dlopen`, or reached when the program was linked without it, could not
+be loaded. The specs therefore export both from every program
+(`--export-dynamic-symbol`, `toolchain/install-specs.sh`), 20 bytes of
+`.dynsym` and `.dynstr`. A second `environ` in `libamixrt` would be wrong:
+nothing would ever set it. A library's undefined `environ` is satisfied by
+the program, which a check of a library against its NEEDED libraries alone
+has to know.
+
+**What it costs.** The text segment is 27,640 bytes, shared by every
 process, of which a process touches only what it calls; the data segment is
-1,136 bytes, written by 200 `R_68K_RELATIVE` relocations (the table pointers)
-and the GOT, so it is private to each process that loads the library. AMIX's
-68030 kernels map in 2 KiB pages and the 68060 port's in 4 KiB, and the data
-segment does not start on a page boundary: measured with `ram-measure.sh` on a
-68030 with a 1.1 kernel, a process that loads `libamixrt.so.1` costs 2 pages
-of 2 KiB, 4 KiB, more than one that does not. It is installed stripped
-(`--strip-unneeded`: no `.symtab`, no DWARF, `.dynsym` kept), 22,728 bytes
-on disk.
+1,840 bytes (1,408 in the file, 432 of `.bss`), written by 214
+`R_68K_RELATIVE` relocations (the table pointers and 30 GOT entries for the
+library's own data), 4 `R_68K_GLOB_DAT` and, as functions are first called,
+50 `R_68K_JMP_SLOT`, so it is private to each process that loads the
+library. AMIX's 68030 kernels map in 2 KiB pages and the 68060 port's in
+4 KiB, and the data segment does not start on a page boundary: measured with
+`ram-measure.sh` on a 68030 with a 1.1 kernel before the second wave, a
+process that loads `libamixrt.so.1` costs 2 pages of 2 KiB, 4 KiB, more than
+one that does not. The second wave added 708 bytes to the data segment
+(`.bss` 380 of them: the utmpx buffer) and kept it within the same two pages
+of either size (0x8bf8 to 0x9328); `getmntent`'s 1 KiB line buffer is
+allocated when it is first called. It is installed stripped
+(`--strip-unneeded`: no `.symtab`, no DWARF, `.dynsym` kept), 30,948 bytes
+on disk (22,808 before the second wave).
 A process that uses no library needing it pays nothing.
 
 `tools/test-amixrt.sh` checks all of the above on the host -- the exports
@@ -1108,11 +1175,150 @@ exactly, nothing shared with `libc.so.1`, everything it uses exported by
 library the program reaches only through another library, so `libamixrt`'s
 copies are the ones used (`probe/solib-main-rt.c`); state set in the program
 and read in such a library and the other way round, for `drand48`, the syslog
-mask and the interval timers (`probe/solib-main-interpose.c`); and a library
+mask and the interval timers (`probe/solib-main-interpose.c`); a library
 stack loaded with `dlopen`, whose dependencies must be initialised first
-(`probe/solib-dlopen.c`). It also checks that every staged file's segments
-map right in 2 KiB, 4 KiB and 8 KiB pages. `tools/test-compat-host.sh` runs
-`realpath` and `select` on the host against its own.
+(`probe/solib-dlopen.c`); and the second wave against libc's own members:
+`probe/libc-calls.c` is built into a program that links libc's members and
+into a library reached through another one, so its calls are `libamixrt`'s,
+and `run-amixrt.sh` compares the two programs' output line for line. It also
+checks that every staged file's segments map right in 2 KiB, 4 KiB and
+8 KiB pages, that `vfork`'s text is libc's byte for byte, and that every
+program exports `environ`; and it runs `_fpsetround`, `_fpsetsticky` and
+`siglongjmp` side by side with libc's members, taken from the sysroot,
+under qemu-m68k's 68040 and 68060 (`tests/amixrt-qemu/libc-diff.c`).
+`tools/test-compat-host.sh` runs `realpath` and `select` on the host against
+its own, and the getmntent, syslog and utmpx groups with AMIX's record
+layouts (`probe/amixrt-libc-host.c`, `tests/host-shim/`).
+
+## The shared C++ runtime: libstdc++.so.6
+
+A C++ library linked with the static runtime carries its own copy of
+`operator new`, `__cxa_throw`, the personality routine, `type_info` and,
+through `libgcc.a`, the unwinder. That copy is not position-independent:
+in CDE's `libtt.so` and `libDtSvc.so` it is about 17 KB of text
+relocations each, pages that turn private in every process. And each
+library has its own exception globals and its own registry of `.eh_frame`
+sections, so an exception thrown in one library ends in `terminate` as soon
+as it reaches a frame of another object.
+
+Two ways out were weighed:
+
+| | PIC static archives, a copy per library | One shared runtime |
+|---|---|---|
+| Text relocations | gone | gone |
+| Runtime state | one per library | one per process |
+| Exceptions across libraries | still `terminate`: each copy's unwinder sees only its own library's frames, and the runtime linker binds every library's `__cxa_throw` to the first copy it finds | work |
+| `type_info` | duplicated, compared by name: works | one copy for the runtime's own types |
+| A library reached only through another's `DT_NEEDED` | links only if the program fills in the runtime | links |
+| Programs | unchanged | unchanged unless linked with `-shared-libgcc` |
+| Cost | the runtime's text in every library | 26 KB of private data per process that loads it |
+
+PIC archives fix the memory and leave the fault, so the shared runtime is
+built. The unwinder goes into the same library, exported, rather than into a
+separate `libgcc_s.so.1`: one library fewer to load and relocate, and every
+C++ library NEEDs `libstdc++.so.6` anyway.
+
+**How it is built.** GCC builds no shared library for `m68k-elf`: to libtool
+the target has none. `toolchain/build-cxx-shared.sh` makes one from GCC's
+build tree after the static libraries: libgcc's build directory, copied,
+made in its shared-library mode (every member compiled `-fPIC`, without the
+static archive's `-fvisibility=hidden`); libstdc++ configured again from the
+static build's own `config.status` and `config.cache`, so with the same
+configuration, and made with `-fPIC -DPIC` added to the same flags. Not
+`-D_GLIBCXX_SHARED`: that adds only compatibility symbols for old binaries,
+which need symbol versioning. So the library holds exactly the static
+library's code, position-independent, linked by `gcc -shared` like any other
+library here: no symbol versions, a SysV hash table, the library names first
+in `.dynstr`, `DT_INIT` handing the constructors to the program's runner,
+`DT_NEEDED libamixrt.so.1` for `__cxa_atexit`, `snprintf` and the rest, and
+`-z text`, so a text relocation is an error. The libgcc members other than
+the unwinder are hidden in it (`--exclude-libs`).
+
+Three things are left out or replaced, because AMIX has them only in the
+static, non-PIC `libm.a`:
+
+- `math_stubs_long_double.o` wraps eighteen libm functions as their `long
+  double` forms, which SVR4.0 lacks. It is in `libstdc++_nonshared.a`, which
+  the link-time `libstdc++.so` (a linker script) names after
+  `libstdc++.so.6`, so a program that calls `sinl` still links.
+- `floor`, which the hash tables' rehash policy calls, and `frexpl`, for
+  `std::hash<long double>`, are hidden copies of our own in
+  `compat/amix_cxxrt.c`. `tools/test-compat-host.sh` compares `floor` with
+  the host's over 400,000 values; built for m68k and run under qemu-m68k
+  as a 68030, a 68040 and a 68060, it matched the host on 4,022 of them.
+
+**Measured** (GCC 14.2.0): 1,796,424 bytes stripped. The text segment,
+1.77 MB, is shared by every process; the data segment, 26,476 bytes in
+memory (`.data.rel.ro` 13,304, `.got` 8,392, `.bss` 4,276), is private to
+each process that loads the library, about 13 pages of 2 KiB on a 68030 or 7
+of 4 KiB on a 68060. At load the runtime linker applies 4,537 relocations,
+of which 941 are PLT slots and 2,282 need a symbol lookup. That is the price
+of one copy of the runtime; for a process that loads two C++ libraries it is
+already less than the two static copies' text relocations, and it is the
+only arrangement in which exceptions cross. Not yet measured on a machine:
+the time the relocations take at start-up on a 68030.
+
+**Where it is, and who gets it.** `$prefix/m68k-elf/lib/cxxrt`, a directory
+of its own, which the specs put on the library path ahead of the one holding
+`libstdc++.a` for `-shared` and `-shared-libgcc` only. So:
+
+- `g++ -shared` makes a library that NEEDs `libstdc++.so.6`.
+- `g++ -shared-libgcc` makes a program that takes the runtime from it.
+  `-shared-libgcc` is GCC's own option for the shared unwinder, and the
+  unwinder is in `libstdc++.so.6`. A new option name cannot be used: the
+  driver accepts an option it does not know only from a `-specs=` file.
+- A program linked the default way is the same, byte for byte, as before:
+  `tools/test-cxx-shared.sh` checks it against `-static-libstdc++`, and the
+  programs linked before and after this change, in the same prefix and after
+  a rebuild of it, are identical. A library linked with `gcc -shared` has the
+  same code, data and symbols, but its GOT slots can come in another order:
+  ld orders them by where its hash table put them, and any change to the
+  library path, even one more `-L` directory that holds nothing it reads,
+  changes that.
+- `-static-libstdc++` still links the static runtime: ld then looks for
+  archives only, and `cxxrt` has no `libstdc++.a`.
+
+On the machine `libstdc++.so.6` goes in `/usr/lib`, beside `libamixrt.so.1`.
+
+**Not mixing them.** A program linked the default way against a C++
+library has two runtimes: its own static copy, which ld exports because the
+library refers to it, and `libstdc++.so.6`. The runtime linker looks in the
+program first, so the library's `__cxa_throw` runs the program's copy, whose
+unwinder has never seen the library's frames, and the first exception
+thrown in the library ends in `terminate`. `compat/amix_cxxrt.c` checks at
+start-up, from `libstdc++.so.6`'s constructors: it compares the addresses
+`__gxx_personality_v0`, `__cxa_throw` and `__cxa_begin_catch` are bound to
+with the library's own definitions, which the link gives a second, hidden
+name. When they differ it writes
+
+```
+libstdc++.so.6: this program has a C++ runtime of its own (static libstdc++) and also loads the shared one; exceptions cannot cross between them.  Link the program with g++ -shared-libgcc.
+```
+
+and exits with status 127, before the program's constructors and `main`. A
+program can legitimately replace `operator new`, so that is not compared.
+The comparison goes through an empty `asm`: the compiler takes two
+different names for two different objects and otherwise folds the test to
+"unequal".
+
+**Two things to know.**
+
+- The runner runs the libraries' constructors last loaded first, so
+  `libstdc++.so.6`'s, among them the standard streams', run before those of
+  the libraries loaded ahead of it: the program's own C++ libraries, which
+  g++ names before `-lstdc++`. A C++ library that only another library
+  NEEDs is loaded after `libstdc++.so.6`, and its constructors run first:
+  they must not use `std::cout`.
+- A C program linked against a C++ library gets a copy of libgcc's unwinder
+  from `libgcc.a`: ld fills the library's `_Unwind_Resume` from the archive
+  before it reads `libstdc++.so.6`, which the library NEEDs. The copy is
+  hidden, so nothing binds to it, and costs the program its size, about
+  10 KB. `g++ -shared-libgcc` avoids it.
+
+`tools/test-cxx-shared.sh` checks the library's shape, two C++ libraries
+sharing types and a program in C++ and one in C using them, the default
+link of static programs, and stages the programs for a run on the machine
+(`docs/shared-library-tests.md`).
 
 ## GCC carries two patches: bits of a byte in memory (PR 126121)
 
@@ -1239,7 +1445,11 @@ source keeps in 0..7, and 5 constant tables in a stripped program's `.text`
 (DES permutation tables in dropbear and xdm) that decode as `btst`. Before
 the switch-table and bound fixes it flagged 535 there, 472 of them switch-table
 words. The two data-only objects in the kit (`sunfont.o`) are exit 2 without
-`--no-code-ok`. Each of those fixes has a regression case in
+`--no-code-ok`. In an unstripped `-fPIC` object a switch table's base is
+a `.L` label the assembler keeps (the table is loaded through the GOT), and
+objdump prints it right after the `jmp`; a `.L` label ends only what is
+known, not the function or the table (taken for a function, it made 6 false
+findings in a PIC libstdc++). Each of those fixes has a regression case in
 `tests/check-bset-mem/` (`tools/test-check-bset-mem.sh`). On `bitops.c` it flags `setbit_char` in
 the unpatched compiler's output and nothing with the first patch. Over the
 test cases, `compat/*.c` and two probes at `-O1`, `-O2`, `-Os` and `-O3` it
