@@ -32,6 +32,13 @@ rm -rf "${TREE:?}"
 mkdir -p "$TREE"
 (cd "$TREE" && ../amixrt-libc-host)
 rm -rf "${TREE:?}"
+# floor and frexpl from libstdc++.so.6's compat object, renamed so the host
+# C library's own stay in charge, against those.
+cc -O1 -g -Wall -Wextra -DAMIX_CXXRT_HOST_TEST \
+   -Dfloor=amix_test_floor -Dfrexpl=amix_test_frexpl \
+   -c -o build/hosttest/amix_cxxrt.o compat/amix_cxxrt.c
+cc -O1 -g -Wall -Wextra -o build/hosttest/cxxrt probe/cxxrt-host.c build/hosttest/amix_cxxrt.o -lm
+./build/hosttest/cxxrt
 # The C++ destructor list.  Its symbols are renamed, so the host C library's
 # own __cxa_atexit stays in charge of this test program.  Built without PIE:
 # the host compiler defines __PIC__ for PIE, and amix_cxa.c's __PIC__ build is

@@ -106,6 +106,14 @@ produces a **working binary that behaves wrongly** rather than a build error:
   the lazy binder changes `%d0`. `environ` is the program's (the specs export
   it from every program), never `libamixrt`'s. `tools/test-amixrt.sh`
   checks all of it; `docs/TOOLCHAIN.md` has the reasons.
+- **The shared C++ runtime is `libstdc++.so.6`, in a directory of its own.**
+  `toolchain/build-cxx-shared.sh` builds it from GCC's build tree: libstdc++
+  and libgcc compiled `-fPIC`, the unwinder exported from it. `g++ -shared`
+  links it, so a C++ library carries no copy of the runtime; a program takes
+  it only with `g++ -shared-libgcc`, so a program linked the default way is
+  byte-identical to before. Mixing the two is fatal at start-up, by design:
+  exceptions cannot cross two runtimes. `tools/test-cxx-shared.sh` checks it;
+  `docs/TOOLCHAIN.md`, "The shared C++ runtime", has the reasons.
 - **Every program carries the constructor runner, in `amix_init.o`, and
   exports it.** It runs shared libraries' constructors after libc is
   consistent, dependencies first, at start-up and, through the specs'

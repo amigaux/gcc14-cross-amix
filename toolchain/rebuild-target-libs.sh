@@ -79,4 +79,11 @@ if [ "$BAD" != "0" ]; then
 	echo "  Run toolchain/install-fixed-headers.sh, then this script again."
 	exit 1
 fi
-echo "rebuild-target-libs.sh: done, no mangled C symbols."
+echo "rebuild-target-libs.sh: no mangled C symbols."
+
+echo
+echo "== the shared C++ runtime, from the libraries just rebuilt"
+# libstdc++.so.6 is made from these build trees; left as it was, it would
+# hold the old code while the static libraries hold the new.
+./toolchain/build-cxx-shared.sh
+echo "rebuild-target-libs.sh: done."

@@ -944,22 +944,29 @@ reads after it has searched the archives, and the libraries loaded with
 `tools/test-shared-indirect.sh` links a program against a library that NEEDs
 another, naming only the first, and checks the result.
 
-The C++ runtime is not in `libamixrt`. Four consequences:
+The C++ runtime is not in `libamixrt`. It is in `libstdc++.so.6`, which
+`g++ -shared` links (see "The shared C++ runtime" below). Four
+consequences:
 
-- A program that uses a C++ library links with `g++`, even if the program
-  itself is C. Otherwise `ld` stops with `undefined reference to
-  __gxx_personality_v0`. A destructor that calls any C function needs it:
-  AMIX's headers do not mark C functions as non-throwing, so the call inside
-  a `noexcept` destructor gets an exception table.
-- A C++ library reached only through another library's `DT_NEEDED` still
-  fails to link: `operator delete` and the rest of `libstdc++.a` are filled
-  in for libraries on the command line only. Name it, or link the program
-  against it directly. A shared `libstdc++` would fix it, and is not built.
-- Build a C++ library with `gcc -shared`, or `g++ -shared -nostdlib++`. Plain
-  `g++ -shared` adds `-lstdc++ -lm` and copies a static, non-PIC C++ runtime
-  into the library, and `--warn-textrel` says so.
+- Build a C++ library with `g++ -shared`. It NEEDs `libstdc++.so.6` and
+  carries no copy of the runtime. `gcc -shared`, or `g++ -shared
+  -nostdlib++`, leaves the runtime's symbols undefined, to be found at run
+  time in whatever provides them; `g++ -shared -static-libstdc++` copies the
+  static, non-PIC runtime into the library, and `--warn-textrel` says so.
+- A C++ program that uses a C++ library links with `g++ -shared-libgcc`, so
+  that it takes the runtime from `libstdc++.so.6` too. Linked the default
+  way it carries a static copy of its own, and `libstdc++.so.6` stops it at
+  start-up with a message, because exceptions cannot cross between the two.
+  A C program needs no option: it links nothing of the C++ runtime.
+- A C++ library reached only through another library's `DT_NEEDED` links:
+  what it needs of the runtime is in `libstdc++.so.6`, which the library
+  NEEDs, and `-rpath-link` finds it.
 - `libgcc` is linked into each library. Its members are hidden, and its
   integer helpers (`__divdi3` and the rest) have no absolute relocations.
+  Its floating-point helpers (`lb1sf68.S`: `long double` conversions,
+  `__fixunsxfsi` and the like) have: a library that uses them gets text
+  relocations. `libstdc++.so.6` is linked against a position-independent
+  build of libgcc for that reason.
 
 **C++ static destructors run at exit, from `libamixc99`.** A library's static
 objects register with `__cxa_atexit` like the program's own, into one list:
@@ -978,11 +985,14 @@ library's destructors, and at exit the call finds them already done.
 `tools/test-compat-host.sh` checks which entries each call runs, and the exit
 order against a stand-in `_cleanup`.
 
-**Exceptions do not cross a library.** The unwinder is in `libgcc.a`, built
-with hidden symbols, so each program has a private copy. A shared library
-cannot register its `.eh_frame` with that copy, and an exception thrown in or
-through a library's frames ends in `terminate`. Making that work needs a shared
-`libgcc_s`, which is not built.
+**Exceptions cross a library when everything uses one runtime.** The
+unwinder in `libgcc.a` is built with hidden symbols, so a program linked
+the default way has a private copy, and a shared library cannot register
+its `.eh_frame` with it. `libstdc++.so.6` exports the unwinder: every C++
+library linked with `g++ -shared`, and every program linked with
+`g++ -shared-libgcc`, registers with that one copy, and an exception can be
+thrown in one object and caught in another. Mixing the two is what
+`libstdc++.so.6`'s start-up check stops.
 
 **Function addresses differ across the boundary.** Measured on AMIX 2.1c. When
 a program takes the address of a library function, `ld` gives the program a
@@ -1179,6 +1189,136 @@ under qemu-m68k's 68040 and 68060 (`tests/amixrt-qemu/libc-diff.c`).
 `tools/test-compat-host.sh` runs `realpath` and `select` on the host against
 its own, and the getmntent, syslog and utmpx groups with AMIX's record
 layouts (`probe/amixrt-libc-host.c`, `tests/host-shim/`).
+
+## The shared C++ runtime: libstdc++.so.6
+
+A C++ library linked with the static runtime carries its own copy of
+`operator new`, `__cxa_throw`, the personality routine, `type_info` and,
+through `libgcc.a`, the unwinder. That copy is not position-independent:
+in CDE's `libtt.so` and `libDtSvc.so` it is about 17 KB of text
+relocations each, pages that turn private in every process. And each
+library has its own exception globals and its own registry of `.eh_frame`
+sections, so an exception thrown in one library ends in `terminate` as soon
+as it reaches a frame of another object.
+
+Two ways out were weighed:
+
+| | PIC static archives, a copy per library | One shared runtime |
+|---|---|---|
+| Text relocations | gone | gone |
+| Runtime state | one per library | one per process |
+| Exceptions across libraries | still `terminate`: each copy's unwinder sees only its own library's frames, and the runtime linker binds every library's `__cxa_throw` to the first copy it finds | work |
+| `type_info` | duplicated, compared by name: works | one copy for the runtime's own types |
+| A library reached only through another's `DT_NEEDED` | links only if the program fills in the runtime | links |
+| Programs | unchanged | unchanged unless linked with `-shared-libgcc` |
+| Cost | the runtime's text in every library | 26 KB of private data per process that loads it |
+
+PIC archives fix the memory and leave the fault, so the shared runtime is
+built. The unwinder goes into the same library, exported, rather than into a
+separate `libgcc_s.so.1`: one library fewer to load and relocate, and every
+C++ library NEEDs `libstdc++.so.6` anyway.
+
+**How it is built.** GCC builds no shared library for `m68k-elf`: to libtool
+the target has none. `toolchain/build-cxx-shared.sh` makes one from GCC's
+build tree after the static libraries: libgcc's build directory, copied,
+made in its shared-library mode (every member compiled `-fPIC`, without the
+static archive's `-fvisibility=hidden`); libstdc++ configured again from the
+static build's own `config.status` and `config.cache`, so with the same
+configuration, and made with `-fPIC -DPIC` added to the same flags. Not
+`-D_GLIBCXX_SHARED`: that adds only compatibility symbols for old binaries,
+which need symbol versioning. So the library holds exactly the static
+library's code, position-independent, linked by `gcc -shared` like any other
+library here: no symbol versions, a SysV hash table, the library names first
+in `.dynstr`, `DT_INIT` handing the constructors to the program's runner,
+`DT_NEEDED libamixrt.so.1` for `__cxa_atexit`, `snprintf` and the rest, and
+`-z text`, so a text relocation is an error. The libgcc members other than
+the unwinder are hidden in it (`--exclude-libs`).
+
+Three things are left out or replaced, because AMIX has them only in the
+static, non-PIC `libm.a`:
+
+- `math_stubs_long_double.o` wraps eighteen libm functions as their `long
+  double` forms, which SVR4.0 lacks. It is in `libstdc++_nonshared.a`, which
+  the link-time `libstdc++.so` (a linker script) names after
+  `libstdc++.so.6`, so a program that calls `sinl` still links.
+- `floor`, which the hash tables' rehash policy calls, and `frexpl`, for
+  `std::hash<long double>`, are hidden copies of our own in
+  `compat/amix_cxxrt.c`. `tools/test-compat-host.sh` compares `floor` with
+  the host's over 400,000 values; built for m68k and run under qemu-m68k
+  as a 68030, a 68040 and a 68060, it matched the host on 4,022 of them.
+
+**Measured** (GCC 14.2.0): 1,796,424 bytes stripped. The text segment,
+1.77 MB, is shared by every process; the data segment, 26,476 bytes in
+memory (`.data.rel.ro` 13,304, `.got` 8,392, `.bss` 4,276), is private to
+each process that loads the library, about 13 pages of 2 KiB on a 68030 or 7
+of 4 KiB on a 68060. At load the runtime linker applies 4,537 relocations,
+of which 941 are PLT slots and 2,282 need a symbol lookup. That is the price
+of one copy of the runtime; for a process that loads two C++ libraries it is
+already less than the two static copies' text relocations, and it is the
+only arrangement in which exceptions cross. Not yet measured on a machine:
+the time the relocations take at start-up on a 68030.
+
+**Where it is, and who gets it.** `$prefix/m68k-elf/lib/cxxrt`, a directory
+of its own, which the specs put on the library path ahead of the one holding
+`libstdc++.a` for `-shared` and `-shared-libgcc` only. So:
+
+- `g++ -shared` makes a library that NEEDs `libstdc++.so.6`.
+- `g++ -shared-libgcc` makes a program that takes the runtime from it.
+  `-shared-libgcc` is GCC's own option for the shared unwinder, and the
+  unwinder is in `libstdc++.so.6`. A new option name cannot be used: the
+  driver accepts an option it does not know only from a `-specs=` file.
+- A program linked the default way is the same, byte for byte, as before:
+  `tools/test-cxx-shared.sh` checks it against `-static-libstdc++`, and the
+  programs linked before and after this change, in the same prefix and after
+  a rebuild of it, are identical. A library linked with `gcc -shared` has the
+  same code, data and symbols, but its GOT slots can come in another order:
+  ld orders them by where its hash table put them, and any change to the
+  library path, even one more `-L` directory that holds nothing it reads,
+  changes that.
+- `-static-libstdc++` still links the static runtime: ld then looks for
+  archives only, and `cxxrt` has no `libstdc++.a`.
+
+On the machine `libstdc++.so.6` goes in `/usr/lib`, beside `libamixrt.so.1`.
+
+**Not mixing them.** A program linked the default way against a C++
+library has two runtimes: its own static copy, which ld exports because the
+library refers to it, and `libstdc++.so.6`. The runtime linker looks in the
+program first, so the library's `__cxa_throw` runs the program's copy, whose
+unwinder has never seen the library's frames, and the first exception
+thrown in the library ends in `terminate`. `compat/amix_cxxrt.c` checks at
+start-up, from `libstdc++.so.6`'s constructors: it compares the addresses
+`__gxx_personality_v0`, `__cxa_throw` and `__cxa_begin_catch` are bound to
+with the library's own definitions, which the link gives a second, hidden
+name. When they differ it writes
+
+```
+libstdc++.so.6: this program has a C++ runtime of its own (static libstdc++) and also loads the shared one; exceptions cannot cross between them.  Link the program with g++ -shared-libgcc.
+```
+
+and exits with status 127, before the program's constructors and `main`. A
+program can legitimately replace `operator new`, so that is not compared.
+The comparison goes through an empty `asm`: the compiler takes two
+different names for two different objects and otherwise folds the test to
+"unequal".
+
+**Two things to know.**
+
+- The runner runs the libraries' constructors last loaded first, so
+  `libstdc++.so.6`'s, among them the standard streams', run before those of
+  the libraries loaded ahead of it: the program's own C++ libraries, which
+  g++ names before `-lstdc++`. A C++ library that only another library
+  NEEDs is loaded after `libstdc++.so.6`, and its constructors run first:
+  they must not use `std::cout`.
+- A C program linked against a C++ library gets a copy of libgcc's unwinder
+  from `libgcc.a`: ld fills the library's `_Unwind_Resume` from the archive
+  before it reads `libstdc++.so.6`, which the library NEEDs. The copy is
+  hidden, so nothing binds to it, and costs the program its size, about
+  10 KB. `g++ -shared-libgcc` avoids it.
+
+`tools/test-cxx-shared.sh` checks the library's shape, two C++ libraries
+sharing types and a program in C++ and one in C using them, the default
+link of static programs, and stages the programs for a run on the machine
+(`docs/shared-library-tests.md`).
 
 ## GCC carries two patches: bits of a byte in memory (PR 126121)
 

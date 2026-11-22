@@ -23,7 +23,7 @@
 #     (its RTL dump says "Instruction folded" for the miscompile);
 #  3. tools/check-bset-mem.py finds nothing in byteclr.o at -O2 or in the
 #     runtime libraries (libgcc.a, libstdc++.a, libsupc++.a, libamixc99.a,
-#     libamixrt.so.1);
+#     libamixrt.so.1, and cxxrt/libstdc++.so.6 where it exists);
 #  4. the cases are built at -O1, -O2, -O3, -Os and -O2 -ffold-mem-offsets,
 #     linked with a crt0 for Linux system calls, and run on a 68030, a 68040
 #     and a 68060 in qemu-m68k, which checks every stored value.  Nothing
@@ -101,6 +101,8 @@ fi
 LIBGCC=$("$CC" -print-libgcc-file-name)
 LIB="$(dirname "$BIN")/$TC_TARGET/lib"
 RUNTIME=("$LIBGCC" "$LIB"/libstdc++.a "$LIB"/libsupc++.a "$LIB"/libamixc99.a "$LIB"/amixrt/libamixrt.so.1)
+# The shared C++ runtime, where the toolchain has one (older prefixes do not).
+[ -f "$LIB/cxxrt/libstdc++.so.6" ] && RUNTIME+=("$LIB/cxxrt/libstdc++.so.6")
 if python3 tools/check-bset-mem.py --objdump "$OBJDUMP" "${RUNTIME[@]}" > "$OUT/bset-runtime.txt" 2>&1; then
 	pass "the runtime libraries"
 else

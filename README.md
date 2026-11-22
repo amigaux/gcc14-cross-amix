@@ -203,7 +203,8 @@ fault.
 them, checks them with `readelf` on the host, and stages them for a run on the
 machine. `tools/test-shared-indirect.sh`, `tools/test-pic-globals.sh` and
 `tools/test-amixrt.sh` do the same for a library reached through another
-library, for a library's pointers to its own data, and for `libamixrt.so.1`;
+library, for a library's pointers to its own data, and for `libamixrt.so.1`,
+and `tools/test-cxx-shared.sh` for the shared C++ runtime, `libstdc++.so.6`;
 [`docs/shared-library-tests.md`](docs/shared-library-tests.md) says how to run
 them on the machine and what to expect.
 
@@ -230,7 +231,11 @@ AMIX's C headers). `probe/stl.cpp` is the acceptance test and it passes.
 Shared libraries build with `gcc -shared -fPIC`, constructors included; see
 `docs/TOOLCHAIN.md` for what they may and may not do. What they need and
 `libc.so.1` does not export comes from `libamixrt.so.1`, built with the
-toolchain; it has to be in `/usr/lib` on the machine that runs them.
+toolchain; it has to be in `/usr/lib` on the machine that runs them. C++
+libraries build with `g++ -shared` and take the C++ runtime from
+`libstdc++.so.6`, which also goes in `/usr/lib`; a C++ program that uses
+one links with `g++ -shared-libgcc`. Programs linked without it keep the
+static runtime, unchanged.
 
 Known and unfixed: `fprintf` reaches AMIX's own formatter, which predates C99
 and mis-handles `ll` conversions -- the compat layer replaces `snprintf` and
@@ -263,7 +268,8 @@ with a separate runtime-library exception; MIT is the simpler way to the same
 place.
 
 GCC and binutils are downloaded from ftp.gnu.org at build time and carry their
-own licences; they are not redistributed here. Nothing from AMIX is
+own licences (`libstdc++.so.6`, built here from GCC's sources, is GCC's
+runtime under its GPL with the GCC Runtime Library Exception); they are not redistributed here. Nothing from AMIX is
 redistributed here either — see **What you need**. One thing from it does go
 into a build product: `libamixrt.so.1` carries libc's error and signal message
 tables, which `tools/gen-amixrt-tables.py` copies from your sysroot when the
