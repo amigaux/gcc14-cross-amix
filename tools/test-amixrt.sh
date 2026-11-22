@@ -3,7 +3,7 @@
 #
 # libamixrt.so.1 holds what a shared library needs and libc.so.1 does not
 # export: libamixc99 built position-independent, and our own gettimeofday,
-# select, truncate, realpath, interval timers and message tables
+# select, truncate, realpath, interval timers, sysinfo and message tables
 # (docs/TOOLCHAIN.md, "libamixrt.so: the runtime a shared library needs").
 # This checks its shape with readelf and nm, then builds four probes and
 # checks how each is linked:
@@ -69,13 +69,13 @@ check_not "no initialisation: no DT_INIT, DT_FINI or init arrays" "$R" \
 EXPECT="__cxa_atexit __cxa_finalize __wrap_dlopen _sys_errlist _sys_nerr _sys_nsig _sys_siglist
 amix_snprintf amix_usleep amix_vsnprintf ftruncate getitimer gettimeofday
 realpath select setitimer settimeofday snprintf strcasecmp strncasecmp
-strsignal sys_errlist sys_nerr truncate usleep vsnprintf"
+strsignal sys_errlist sys_nerr sysinfo truncate usleep vsnprintf"
 GOT=$("$NM" -D --defined-only "$RT" | awk '{print $3}' | sort | tr '\n' ' ')
 WANT=$(echo $EXPECT | tr ' ' '\n' | sort | tr '\n' ' ')
 if [ "$GOT" = "$WANT" ]; then
-	pass "exports exactly the first wave and libamixc99"
+	pass "exports exactly the first wave, sysinfo and libamixc99"
 else
-	fail "exports exactly the first wave and libamixc99"
+	fail "exports exactly the first wave, sysinfo and libamixc99"
 	echo "        got:  $GOT"
 	echo "        want: $WANT"
 fi
@@ -130,7 +130,7 @@ else
 	pass "the program NEEDs only libsolibrtmid"
 fi
 OWN=$("$NM" --defined-only "$P" | awk '{print $3}' | grep -xE \
-	'gettimeofday|select|truncate|ftruncate|realpath|setitimer|getitimer|sys_errlist|_sys_siglist|snprintf|usleep|strsignal' || true)
+	'gettimeofday|select|truncate|ftruncate|realpath|setitimer|getitimer|sys_errlist|_sys_siglist|snprintf|usleep|strsignal|sysinfo' || true)
 if [ -z "$OWN" ]; then
 	pass "the program has no copy of its own, so libamixrt's are the ones used"
 else

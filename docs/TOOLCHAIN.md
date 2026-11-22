@@ -1034,8 +1034,8 @@ does not export, in one position-independent shared object:
   `__cxa_finalize`, and `__wrap_dlopen`;
 - our own implementations of functions AMIX has only as static members of
   `usr/ccs/lib/libc.so`: `gettimeofday` and `settimeofday`, `select`,
-  `truncate` and `ftruncate`, `realpath`, `getitimer` and `setitimer`, and
-  the tables `sys_errlist`, `sys_nerr`, `_sys_siglist` and `_sys_nsig`.
+  `truncate` and `ftruncate`, `realpath`, `getitimer` and `setitimer`,
+  `sysinfo`, and the tables `sys_errlist`, `sys_nerr`, `_sys_siglist` and `_sys_nsig`.
 
 Libc's own members cannot be used: they are not position-independent, so a
 library linking them gets text relocations (8 for `gettimeofday` alone,
@@ -1077,7 +1077,7 @@ Of libc's 101 archive members, 90 define nothing `libc.so.1` exports:
 
 | Kind | Members | In `libamixrt` |
 |---|---|---|
-| Thin system-call wrappers, no state | adjtime, fstatfs, getdents, gtty, hrtsys, mincore, mlockall, munlockall, _nfssys, nfssys, plock, rfsys, seteguid, statfs, stty, swapctl, syscall, sysfs, sysinfo, uadmin, ustat, utssys, vfork (23) | when needed: `trap #0` and `_cerror`, from `<sys/syscall.h>` |
+| Thin system-call wrappers, no state | adjtime, fstatfs, getdents, gtty, hrtsys, mincore, mlockall, munlockall, _nfssys, nfssys, plock, rfsys, seteguid, statfs, stty, swapctl, syscall, sysfs, sysinfo, uadmin, ustat, utssys, vfork (23) | sysinfo (ToolTalk and DtSvc call it); the rest when needed, through `__amixrt_syscall` (`compat/amixrt_syscall.S`), numbers from `<sys/syscall.h>` |
 | The old `stat` entry points | stat, fstat, lstat (3) | never: `<sys/stat.h>` inlines `_xstat`, which `libc.so.1` exports |
 | Code with no state | gettimeofday, select, truncate, realpath, errlst, siglist (first wave); siginfolst, sigflag, siglongjmp, makectxt, ffs, insque, isnanf, modff, l3, cfree, cftime, gethz, ctype, psignal, psiginfo, str2sig, str2id, ttyslot, putpwent, getpw, gcvt, the six fpget/fpset, getmntent, getvfsent, hrtnewres, hrtcftime, hrtstrftime and the `dl_t` arithmetic (47) | first wave in; the rest when needed |
 | State, one per process | getsetitimer (first wave); drand48, syslog, crypt, getpwent, getgrent, getspent, lckpwdf, getut, getutx, ssignal, ecvt, hrtctime (13) | when needed, each group whole |
@@ -1089,7 +1089,7 @@ which `_rt_setaddr` rebinds libc to, and `_cerror`. Three of them also define
 a name it does not export: `environ` (every program has it, `crt1.o` pulls
 it in), the FP-exception commons of `fpstart0.o`, and the `sys3b` wrapper.
 
-**What it costs.** The text segment is 20,200 bytes, shared by every
+**What it costs.** The text segment is 20,344 bytes, shared by every
 process, of which a process touches only what it calls; the data segment is
 1,136 bytes, written by 200 `R_68K_RELATIVE` relocations (the table pointers)
 and the GOT, so it is private to each process that loads the library. AMIX's
@@ -1097,7 +1097,7 @@ and the GOT, so it is private to each process that loads the library. AMIX's
 segment does not start on a page boundary: measured with `ram-measure.sh` on a
 68030 with a 1.1 kernel, a process that loads `libamixrt.so.1` costs 2 pages
 of 2 KiB, 4 KiB, more than one that does not. It is installed stripped
-(`--strip-unneeded`: no `.symtab`, no DWARF, `.dynsym` kept), 22,728 bytes
+(`--strip-unneeded`: no `.symtab`, no DWARF, `.dynsym` kept), 22,852 bytes
 on disk.
 A process that uses no library needing it pays nothing.
 

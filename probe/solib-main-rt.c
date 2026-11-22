@@ -9,6 +9,8 @@
  */
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>	/* before <sys/systeminfo.h>, which uses SYS_NMLN */
+#include <sys/systeminfo.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -27,6 +29,7 @@ int mid_setitimer(long, long);
 long mid_getitimer(void);
 int mid_tables(void);
 int mid_snprintf(char *, int);
+long mid_sysinfo(int, char *, long);
 
 static int failures;
 static volatile int alarms;
@@ -57,6 +60,7 @@ int main(void)
 	char buf[1024], base[1024], want[1100], tmp[64], d[96];
 	long t, us;
 	char *m;
+	struct utsname un;
 
 	t = mid_now();
 	{
@@ -128,6 +132,22 @@ int main(void)
 	report("snprintf: %lld truncated to 7 characters",
 	       t == 13 && strcmp(buf, "1234567") == 0, d);
 
+	if (uname(&un) < 0) {
+		report("sysinfo: uname for the reference", 0, 0);
+	} else {
+		t = mid_sysinfo(SI_SYSNAME, buf, sizeof buf);
+		sprintf(d, "%ld, \"%s\"", t, t > 0 ? buf : "");
+		report("sysinfo: SI_SYSNAME is uname's sysname",
+		       t == (long)strlen(un.sysname) + 1 && strcmp(buf, un.sysname) == 0, d);
+		t = mid_sysinfo(SI_HOSTNAME, buf, sizeof buf);
+		sprintf(d, "%ld, \"%s\"", t, t > 0 ? buf : "");
+		report("sysinfo: SI_HOSTNAME is uname's nodename",
+		       t == (long)strlen(un.nodename) + 1 && strcmp(buf, un.nodename) == 0, d);
+	}
+	errno = 0;
+	t = mid_sysinfo(-1, buf, sizeof buf);
+	sprintf(d, "%ld, errno %d", t, errno);
+	report("sysinfo: an unknown command fails with EINVAL", t == -1 && errno == EINVAL, d);
 	printf("solib-main-rt: %s\n", failures ? "FAIL" : "PASS");
 	fflush(stdout);
 	return failures != 0;

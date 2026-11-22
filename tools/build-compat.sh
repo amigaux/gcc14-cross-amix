@@ -93,7 +93,7 @@ fi
 # It needs libgcc.a (the 64-bit divide in the formatter), which a fresh
 # toolchain build has not made yet when it first runs this script;
 # build-cross.sh runs it again once libgcc is installed.
-RT_MEMBERS="amix_compat amix_cxa amix_str amix_dlopen amixrt_time amixrt_select \
+RT_MEMBERS="amix_compat amix_cxa amix_str amix_dlopen amixrt_time amixrt_select amixrt_sysinfo \
 	amixrt_truncate amixrt_realpath amixrt_itimer"
 LIBGCC=$($CC -print-libgcc-file-name 2>/dev/null || true)
 if [ -z "$INC" ] && [ -f "$LIBGCC" ]; then

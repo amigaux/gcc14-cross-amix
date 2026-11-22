@@ -4,7 +4,7 @@
  * through libsolibrtmid (probe/solib-rtmid.c), so the program's link cannot
  * supply these functions and they come from libamixrt.so.1 -- which is the
  * point: on AMIX this exercises our own gettimeofday, select, truncate,
- * realpath, the interval timers, the message tables and the C99 pieces,
+ * realpath, the interval timers, sysinfo, the message tables and the C99 pieces,
  * rather than libc's.  Each function returns what it saw; the program
  * (probe/solib-main-rt.c) judges.
  */
@@ -12,6 +12,8 @@
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <sys/select.h>
+#include <sys/utsname.h>	/* SYS_NMLN, which <sys/systeminfo.h> uses */
+#include <sys/systeminfo.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -149,4 +151,10 @@ int rt_tables(void)
 int rt_snprintf(char *buf, int len)
 {
 	return snprintf(buf, len, "%lld", 1234567890123LL);
+}
+
+/* sysinfo(command, buf, count): the length it reports, or -1. */
+long rt_sysinfo(int command, char *buf, long count)
+{
+	return sysinfo(command, buf, count);
 }

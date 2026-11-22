@@ -70,8 +70,9 @@ toolchain that built it.
   `ftruncate`; `realpath` through a symbolic link, with a null buffer, and
   failing with `ENOENT`; a repeating interval timer that keeps its period,
   fires at least twice in four seconds and disarms, and a one-shot that fires
-  once; the message tables matching `strerror`; `snprintf` with `%lld`. It
-  takes about ten seconds.
+  once; the message tables matching `strerror`; `snprintf` with `%lld`;
+  `sysinfo` giving `uname`'s system and node names, and failing with
+  `EINVAL` for an unknown command. It takes about ten seconds.
 - `solib-main-interpose` sets `drand48`'s seed, the syslog mask and an
   interval timer in the program and reads them in a library, and the other
   way round. Every line `ok`, then `PASS`. A failure on the timer lines means
